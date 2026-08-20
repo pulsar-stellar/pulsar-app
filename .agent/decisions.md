@@ -425,3 +425,50 @@ When verification contradicts a document, record the correction in this log, add
 - Verification continues inside a phase: each SDK claim is checked at the point it is used, and a surprise halts the work rather than being worked around.
 - Where behavior can be isolated, it is mutation-checked: break the thing under test and confirm the test notices. A check that cannot fail is not evidence, which is why `scripts/verify-env-parity.sh` was checked against both a missing TypeScript variable and a missing Go one before it was committed.
 - This costs time at the start of each phase and is cheaper than the alternative, which is finding the same defect after it reaches a consumer.
+
+---
+
+## ADR-015: SDK toolchain versions, TypeScript 5.9 with Zod 4
+Date: 2026-08-20
+Status: accepted
+
+### Context
+
+Section 3.1 of the planning draft pins TypeScript at "5.6 or newer", Zod at 3.x, Vitest at 2.x, and tsup at 8.x. Checked before writing `packages/sdk`, per ADR-014. Three of the four had drifted: TypeScript is at 7.0.2, published 2026-07-08, with 6.0.2 also available and 5.9.2 ending the 5 line; Zod is at 4.4.3 with 3.25.76 ending the 3 line; Vitest is at 4.1.11 with 2.1.9 ending the 2 line. The tsup pin holds at 8.5.1.
+
+Each of these reaches consumers through a different surface, which is what makes them separate decisions rather than one "how current do we want to be" decision.
+
+### Decision
+
+| Package | Version | Against section 3.1 |
+|---|---|---|
+| TypeScript | 5.9.2 | satisfies "5.6 or newer" |
+| Zod | 4.4.3 | deviates from 3.x |
+| Vitest | 4.1.11 | deviates from 2.x |
+| tsup | 8.5.1 | holds |
+
+**TypeScript 5.9.2.** The SDK emits `.d.ts` files that consumers compile with their own toolchain. A newer major risks emitting declarations a consumer's setup cannot consume, and the failure lands on them rather than on us. 5.9.2 satisfies the section as written, needs no deviation, and defers 6.x and 7.x until their ecosystem maturity is demonstrated rather than assumed.
+
+**Zod 4.4.3.** Zod is a runtime dependency and lands in the consumer's dependency tree. Pinning 3.x while consumers increasingly run 4.x puts two copies of Zod in their tree. This SDK has no schemas yet, so the migration cost that normally argues for staying on 3.x is zero right now and grows with every schema written.
+
+**Vitest 4.1.11.** Dev-only, invisible to consumers, and it accepts the Node 22 pin from ADR-012.
+
+**tsup 8.5.1.** No decision needed.
+
+### Alternatives considered
+
+**TypeScript 6.0.2.** Rejected. Middle ground that buys little: it carries adoption risk without the 5 line's compatibility record.
+
+**TypeScript 7.0.2.** Rejected. Too fresh for a correctness boundary. Published five weeks before this decision, and it is the major rewrite, so it is the version most likely to emit declarations that trip an older consumer toolchain.
+
+**Zod 3.25.76.** Rejected. Matching the section exactly would defer the migration to a point where schemas exist and it costs real work, while creating duplicate-copy overhead for every consumer already on 4.x in the meantime.
+
+**Vitest 2.1.9.** Rejected. Two majors behind with no compensating benefit, since nothing about the test runner reaches a consumer.
+
+### Consequences
+
+- Declarations are emitted against TypeScript 5.9. Consumers on 5.6 and later compile against them.
+- Moving to TypeScript 6 or 7, or to a future Zod major, needs its own ADR and a check that decoded shapes and emitted declarations are unaffected.
+- Zod 4 idioms are used from the first schema. No 3.x compatibility layer is written.
+- The meta-principle, which generalizes past this decision: for a library other projects consume, "newest" is the wrong optimization and "compatible with the most consumers" is the right one. What that yields differs by how the dependency reaches the consumer. TypeScript reaches them through emitted `.d.ts`, where a newer major raises incompatibility risk, so compatibility means older. Zod reaches them through their dependency tree, where an older major raises duplicate-copy risk, so compatibility means newer. Same principle, opposite conclusions, because the surfaces differ. Ask which surface a dependency touches before asking how current to be.
+- This is the same discipline `pulsar-core` applies to wire shapes: once pinned, they are a consumer contract, not an implementation detail.
