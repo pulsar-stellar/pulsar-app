@@ -28,7 +28,9 @@ Then read `.agent/context.md` for the state of the work, and `.agent/decisions.m
 
 ## Current phase
 
-Sprint 2, Phase A of the Section 12 build sequence: monorepo scaffold and context files, steps 1 through 15. Do not skip forward. Phase B, the SDK skeleton, starts at step 16.
+Sprint 2. Phase A of the Section 12 build sequence, steps 1 through 15, is complete. Phase B, the SDK skeleton, starts at step 16 and is gated: verify the `@stellar/stellar-sdk` version line, the bindings generation command, and the `getEvents` shape against upstream documentation first, and record the findings in an ADR. See ADR-011. Do not skip forward past step 19.
+
+Node 22 LTS and pnpm 11 are the pinned toolchain, superseding Section 3.1's Node 20 row. See ADR-012.
 
 ## Depends on pulsar-core
 
