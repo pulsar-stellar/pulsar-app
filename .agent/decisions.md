@@ -340,3 +340,51 @@ This supersedes the Node and pnpm rows of section 3.1 for `pulsar-app`. Every ot
 - Node 22 is in active LTS until October 2027, so the next forced runtime decision is more than a year out.
 - Section 3.1's Node and pnpm rows are superseded here and stay unchanged in `docs/planning/system-prompt.md`, which is shared planning material rather than a file this repo owns. Anyone reading that table for `pulsar-app` should read this ADR first.
 - The same conflict will reach `pulsar-core` only if it adopts a Node toolchain. It does not have one today.
+
+---
+
+## ADR-013: SDK verification findings, discharging the ADR-011 gate
+Date: 2026-08-20
+Status: accepted
+
+### Context
+
+ADR-011 held that four claims in the planning draft's SDK spec were unverified and had to be checked against upstream before Phase B step 16. That check has now run, against `@stellar/stellar-sdk@16.2.0` installed and read directly, its shipped `.d.ts` files, its CLI executed, and current Stellar RPC documentation. Two of the four claims were correct as written, and ADR-011's own skepticism about them was wrong.
+
+**Claim 1, the version pin. Confirmed.** `16.2.0` is the current stable release, published 2026-07-29. The line runs 11.x through 16.x, and a `17.0.0-rc.2` prerelease exists, published 2026-08-17.
+
+**Claim 2, the bindings command. Confirmed, with one omission.** The package does ship a CLI. Its `bin` is named `stellar-js`, not `stellar-sdk`, but `npx @stellar/stellar-sdk generate` resolves to it and runs, so the documented invocation works verbatim. `--contract-id` and `--output-dir` both exist. The omission: fetching by contract ID also requires `--network` or `--rpc-url`, and without one the command exits with `--rpc-url is required when fetching from network`. Verified end to end by generating bindings for the showcase contract `CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L` with `--network testnet`, which produced a client exposing the contract's real surface, including the `AmountOutOfRange` error variant.
+
+**Claim 3, the RPC API shape. Confirmed, with two corrections.** `rpc.Server` is correct: the class is declared `RpcServer` and re-exported as `Server` from `rpc/index.js`. The constructor is `(serverURL: string, opts?: RpcServer.Options)`. `getEvents(request: Api.GetEventsRequest): Promise<Api.GetEventsResponse>` is correct, and the filter shape `{ type: 'contract', contractIds: [...] }` is correct.
+
+The first correction is that `GetEventsRequest` is a discriminated union, not a flat object. Ledger-range mode takes `startLedger` with optional `endLedger` and declares `cursor?: never`. Cursor mode takes `cursor` and declares `startLedger?: never` and `endLedger?: never`. The two cannot be mixed, so a paginating loop must switch modes after its first page rather than carry `startLedger` forward.
+
+The second is that `EventType` is `"contract" | "system"`. There is no `"diagnostic"` member, despite a JSDoc example in `server.d.ts` that shows `type: "diagnostic"`. Diagnostic events cannot be filtered for through this type.
+
+Field names to write against, from `EventResponse` and its base: `id`, `type`, `ledger`, `ledgerClosedAt`, `transactionIndex`, `operationIndex`, `inSuccessfulContractCall`, `txHash`, `topic` (singular, `xdr.ScVal[]`), `value` (`xdr.ScVal`), and `contractId` (optional, a `Contract` instance rather than a string). `GetEventsResponse` carries `events`, `cursor`, `latestLedger`, `oldestLedger`, `latestLedgerCloseTime`, and `oldestLedgerCloseTime`.
+
+**Claim 4, the seven-day retention window. Corrected.** Retention is not a fixed protocol property. Stellar RPC retains a ledger-denominated history governed by a single `history-retention-window` setting whose stock default is 120960 ledgers, which is roughly seven days at current ledger cadence. It is per-node configuration, so a provider may run a shorter or longer window, and the documentation states no per-network difference between testnet, mainnet, and futurenet. The effective window is readable at runtime: `getHealth()` returns `ledgerRetentionWindow`, `oldestLedger`, and `latestLedger`, and every `getEvents` response carries `oldestLedger` and `oldestLedgerCloseTime`.
+
+### Decision
+
+Phase B may begin. Write SDK and indexer code against the shapes recorded above, with these four rules.
+
+1. Pin `@stellar/stellar-sdk` at exactly `16.2.0` as a dev dependency. Do not adopt the 17.0.0 release candidate line, on the same reasoning as `pulsar-core` ADR-001: a prerelease changes before it is final, and event decoding is the correctness boundary for every downstream consumer.
+2. Declare the peer range as `>=16.2.0 <17.0.0` rather than the draft's open-ended `>=16.2.0`. An open range admits a major version whose decoding behavior has not been checked against our fixtures.
+3. Never hardcode seven days or 120960 ledgers as a retention constant. Read `oldestLedger` from the response the indexer already has, and treat the gap between it and the last indexed ledger as the coverage question. The seven-day figure stays in prose, where it is described as a default rather than a guarantee.
+4. Document the bindings command with `--network testnet` included, since the draft's example does not run as written.
+
+### Alternatives considered
+
+**Adopt 17.0.0-rc.2.** Rejected. Same reasoning as `pulsar-core` ADR-001.
+
+**Keep the open-ended peer range from the draft.** Rejected. It moves a compatibility decision from us to whichever version a consumer's resolver happens to pick.
+
+**Treat seven days as a constant and skip the runtime check.** Rejected. It is a default, not a guarantee, and the value needed to decide whether history has a hole is already present in every response.
+
+### Consequences
+
+- ADR-011's gate is discharged. Its text stands unedited, including the two predictions this ADR shows were wrong, because the log is append-only. Read this entry alongside it.
+- The planning draft's section 6.5 sample does not paginate correctly as written and its section 6.6 command does not run as written. Both are superseded here.
+- The indexer's event table can be modeled directly on the field list above.
+- A `17.0.0` upgrade needs its own ADR and a fixture comparison proving decoded shapes are unaffected.
