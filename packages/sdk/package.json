@@ -56,7 +56,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --typecheck",
     "test:coverage": "vitest run --coverage"
   }
 }

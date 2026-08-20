@@ -12,6 +12,10 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     exclude: ['tests/**/*.integration.test.ts'],
+    typecheck: {
+      include: ['tests/**/*.test-d.ts'],
+      tsconfig: './tsconfig.json',
+    },
     coverage: {
       provider: 'v8',
       include: ['src/**/*.ts'],
