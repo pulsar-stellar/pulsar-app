@@ -55,7 +55,7 @@ The toolkit is aimed at a Drips Wave submission. That shapes two things. Repo hy
 ## 8. Local development
 
 ```sh
-nvm use                       # reads .nvmrc, Node 20
+nvm use                       # reads .nvmrc, Node 22
 corepack enable               # provides pnpm
 pnpm install                  # all TypeScript workspaces
 cp .env.example .env.local    # then fill in anything non-default

@@ -47,8 +47,8 @@ This repository depends on `pulsar-core` `v0.1.0-contracts`, which is deployed t
 
 | Tool | Version |
 |---|---|
-| Node.js | 20 LTS, pinned in `.nvmrc` |
-| pnpm | 9 or newer |
+| Node.js | 22 LTS, pinned in `.nvmrc` |
+| pnpm | 11 or newer |
 | Go | 1.23 or newer, for the indexer only |
 
 ## Local development

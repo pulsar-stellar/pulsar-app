@@ -12,16 +12,16 @@ Three sub-stacks, two toolchains. The TypeScript side is one pnpm workspace. The
 
 | Tool | Version | Install |
 |---|---|---|
-| Node.js | 20 LTS, pinned in `.nvmrc` | `nvm install` in the repo root |
-| pnpm | 9 or newer | `corepack enable` |
+| Node.js | 22 LTS, pinned in `.nvmrc` | `nvm install` in the repo root, see ADR-012 |
+| pnpm | 11 or newer | `corepack enable` |
 | Go | 1.23 or newer | platform specific, indexer only |
 | Git | 2.40 or newer | platform specific |
 
 Verify before you start:
 
 ```sh
-node --version     # expect v20.x
-pnpm --version     # expect 9 or newer
+node --version     # expect v22.x
+pnpm --version     # expect 11 or newer
 go version         # expect go1.23 or newer
 ```
 
