@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+.next/
+out/
+
+# Go indexer
+indexer/pulsar.db
+indexer/pulsar.db-shm
+indexer/pulsar.db-wal
+indexer/bin/
+indexer/pulsar-indexer
+
+# Environment and secrets: never committed, see .env.example for the shape
+.env
+.env.local
+.env.*.local
+
+# Test and coverage output
+coverage/
+*.out
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
