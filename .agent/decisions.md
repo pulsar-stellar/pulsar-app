@@ -388,3 +388,40 @@ Phase B may begin. Write SDK and indexer code against the shapes recorded above,
 - The planning draft's section 6.5 sample does not paginate correctly as written and its section 6.6 command does not run as written. Both are superseded here.
 - The indexer's event table can be modeled directly on the field list above.
 - A `17.0.0` upgrade needs its own ADR and a fixture comparison proving decoded shapes are unaffected.
+
+---
+
+## ADR-014: Verify external SDK behavior before building on it
+Date: 2026-08-20
+Status: accepted
+
+### Context
+
+ADR-011 flagged four claims in the planning draft's SDK spec as unverified. ADR-013 recorded what checking them found: two were correct exactly as written, and two were wrong in ways that would have shipped as defects. The draft's `getEvents` sample cannot paginate, because the request type is a discriminated union that forbids mixing a cursor with a ledger range. Its bindings command does not run, because fetching by contract ID also needs `--network` or `--rpc-url`. Both would have compiled or appeared to work in review.
+
+Note which way the errors ran. ADR-011 predicted the version pin and the bindings command were wrong; both were right. It accepted the RPC sample and the retention figure as plausible; both were wrong. Skepticism pointed at the wrong claims, so grading claims by how suspicious they look does not work. Only checking does.
+
+The cause is ordinary. The spec was drafted before `@stellar/stellar-sdk` 16.2.0 was published on 2026-07-29. A specification written against a moving dependency is accurate as of its drafting date and drifts from there, silently, with no signal that it has.
+
+`pulsar-core` hit the same thing in Sprint 1 Phase B, where the `#[contractevent]` behavior in its own draft predated soroban-sdk 26.1.0's macro and described helper functions that no longer existed. It was caught by checking against the pinned SDK before writing, and the draft section carries a stale marker pointing at the tracked correction.
+
+### Decision
+
+Before writing code against an external dependency's API, verify the shape you are about to write against, using the dependency itself rather than a specification, a memory, or a search result summarizing an older version. In order of preference: read the installed package's type declarations, execute its CLI, or read the current upstream documentation.
+
+This applies whenever a planning document, an ADR, or a prior session states an external API's shape. It applies with full force to `@stellar/stellar-sdk`, `github.com/stellar/go`, and Stellar RPC, where names and response shapes have moved between majors.
+
+When verification contradicts a document, record the correction in this log, add a stale marker to the superseded section of the draft, and build against the correction. Halt rather than guess when the check produces a surprise.
+
+### Alternatives considered
+
+**Trust the specification and let CI catch the difference.** Rejected. A wrong version pin fails at install and a wrong type fails at typecheck, but a wrong documented command for consumers passes CI and fails for a user, and a pagination loop that silently returns one page passes every test that does not specifically probe the second page.
+
+**Verify once at the start of a phase and treat the result as settled.** Rejected as insufficient on its own. The phase-entry pass catches the claims someone thought to list. Claims surface mid-implementation too, and each one gets the same treatment when it does.
+
+### Consequences
+
+- Phase entry carries a verification pass whose findings land as an ADR before the first commit of the phase. Phase B's is ADR-013.
+- Verification continues inside a phase: each SDK claim is checked at the point it is used, and a surprise halts the work rather than being worked around.
+- Where behavior can be isolated, it is mutation-checked: break the thing under test and confirm the test notices. A check that cannot fail is not evidence, which is why `scripts/verify-env-parity.sh` was checked against both a missing TypeScript variable and a missing Go one before it was committed.
+- This costs time at the start of each phase and is cheaper than the alternative, which is finding the same defect after it reaches a consumer.
