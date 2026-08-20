@@ -3,10 +3,10 @@ name: ci-web
 on:
   push:
     branches: [main]
-    paths: ['apps/web/**', 'packages/sdk/**', '.github/workflows/ci-web.yml']
+    paths: ['apps/web/**', 'packages/sdk/**']
   pull_request:
     branches: [main]
-    paths: ['apps/web/**', 'packages/sdk/**', '.github/workflows/ci-web.yml']
+    paths: ['apps/web/**', 'packages/sdk/**']
 
 permissions:
   contents: read
