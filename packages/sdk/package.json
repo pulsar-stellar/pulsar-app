@@ -1,0 +1,48 @@
+{
+  "name": "@pulsar-stellar/sdk",
+  "version": "0.0.0",
+  "description": "TypeScript client for Soroban contract events, over the Pulsar indexer or straight from RPC",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pulsar-stellar/pulsar-app.git",
+    "directory": "packages/sdk"
+  },
+  "homepage": "https://github.com/pulsar-stellar/pulsar-app/tree/main/packages/sdk#readme",
+  "bugs": "https://github.com/pulsar-stellar/pulsar-app/issues",
+  "keywords": ["stellar", "soroban", "contract-events", "indexer", "xdr"],
+  "type": "module",
+  "sideEffects": false,
+  "files": ["dist"],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "peerDependencies": {
+    "@stellar/stellar-sdk": ">=16.2.0 <17.0.0"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@stellar/stellar-sdk": "16.2.0",
+    "@vitest/coverage-v8": "4.1.11",
+    "msw": "2.15.0",
+    "tsup": "8.5.1",
+    "typescript": "5.9.2",
+    "vitest": "4.1.11"
+  }
+}
