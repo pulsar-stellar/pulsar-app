@@ -42,11 +42,13 @@ Documentation is not in this repo. It lives in `pulsar-stellar/pulsar-docs` and 
 
 ## 6. Current phase and definition of done
 
-Sprint 2. Phase A of the build sequence in `docs/planning/system-prompt.md` section 12, steps 1 through 15, is complete and pushed. The workspace installs clean on a fresh clone, `ci-ts` is green, `.env.example` carries every variable from section 10, and these three `.agent/` files exist.
+Sprint 2. Phase A of the numbered build sequence, steps 1 through 15, is complete and pushed. The workspace installs clean on a fresh clone, `ci-ts` is green, `.env.example` carries every variable the spec lists, and these three `.agent/` files exist. The sequence itself lives in the maintainer-local planning draft, which is not tracked; see `docs/planning/README.md`.
 
-Phase A landed three things the numbered sequence did not call for, each in its own commit: `scripts/verify-env-parity.sh`, which section 10 requires but no step creates; `pnpm-lock.yaml`, without which a frozen-lockfile CI install cannot run; and a correction moving pnpm strictness settings out of `.npmrc`, which pnpm 11 ignores, into `pnpm-workspace.yaml`.
+Phase A landed four things the numbered sequence did not call for, each in its own commit: `scripts/verify-env-parity.sh`, which the spec requires but no step creates; `pnpm-lock.yaml`, without which a frozen-lockfile CI install cannot run; a correction moving pnpm strictness settings out of `.npmrc`, which pnpm 11 ignores, into `pnpm-workspace.yaml`; and a CI path-filter fix after `ci-go` and `ci-web` fired against sub-stacks that do not exist yet.
 
-Next is Phase B, steps 16 through 19, the SDK skeleton. It has an entry gate that is not in the build sequence: before step 16, verify the `@stellar/stellar-sdk` version line, the contract bindings generation command, and the `getEvents` request and response shape against current upstream documentation, then append an ADR recording what each check found. Section 6 of the system prompt was written ahead of that verification and at least one of its claims, the `npx @stellar/stellar-sdk generate` command, looks wrong. See ADR-011. Do not write SDK code against an unverified signature.
+The toolchain is Node 22 LTS with pnpm 11, which supersedes the draft's Node 20 pin. pnpm 11 requires Node 22.13 or newer, so the two pins could not both hold. See ADR-012.
+
+Next is Phase B, steps 16 through 19, the SDK skeleton. Its entry gate is discharged: the `@stellar/stellar-sdk` claims are verified against the installed package and current RPC documentation, and the findings are in ADR-013. Write against that entry, not against the draft's section 6. In short: pin `16.2.0` exactly, declare the peer range `>=16.2.0 <17.0.0`, remember that `getEvents` takes either a ledger range or a cursor and never both, read `oldestLedger` from responses rather than hardcoding a seven-day retention window, and note that the event field is `topic`, singular.
 
 ## 7. Drips Wave context
 
