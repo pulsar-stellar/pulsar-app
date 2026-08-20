@@ -65,7 +65,7 @@ These are enforced, not stylistic preferences.
 **Conventional commit format:** `type(scope): description`
 
 - Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `build`, `ci`
-- Scopes: `sdk`, `indexer`, `web`, `docs`, `workspace`, `ci`, `agent`, `deploy`
+- Scopes: `sdk`, `indexer`, `web`, `docs`, `workspace`, `ci`, `deploy`. Use a scope only where it adds information the paths do not already carry
 - Description: imperative mood, lowercase first letter, no trailing period, under 72 characters
 
 Examples:
@@ -73,7 +73,7 @@ Examples:
 ```
 feat(sdk): implement events query with cursor pagination
 test(indexer): assert events handler rejects unknown contract id
-chore(agent): seed decisions.md with pnpm workspace rationale
+chore: seed decisions.md with pnpm workspace rationale
 ```
 
 ## Test discipline

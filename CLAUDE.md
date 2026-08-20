@@ -18,13 +18,14 @@ This repo is the app layer. The sibling repo `pulsar-stellar/pulsar-core` is the
 
 ## Read before doing anything
 
-Read these in order and treat them as authoritative:
+Everything authoritative is tracked. Read in this order:
 
-1. `docs/planning/requirements.md` — project-wide standards. Where any rule elsewhere is more lenient than this file, this file wins. Where elsewhere is stricter, the stricter rule wins.
-2. `docs/planning/system-prompt.md` — the build guide for this repo. Section 12 holds the numbered build sequence.
-3. `docs/planning/roadmap-product.md` — product context across both repos.
+1. `CONTRIBUTING.md` — setup, commit rules, test discipline, and the code rules per sub-stack. This is the standard your work is measured against.
+2. `.agent/context.md` — the state of the work, what is done, and what the next phase is gated on.
+3. `.agent/decisions.md` — the ADR log. Read it before proposing anything that contradicts a recorded decision. It is append-only.
+4. `.agent/glossary.md` — the domain terms used throughout.
 
-Then read `.agent/context.md` for the state of the work, and `.agent/decisions.md` before proposing anything that contradicts a recorded decision.
+`docs/planning/` is not tracked. It holds maintainer-local drafts, including the system prompt whose section 12 carries the numbered build sequence, and it is absent from a fresh clone. See `docs/planning/README.md`, which is the only tracked file there. Where a draft and a tracked file disagree, the tracked file wins, and a decision worth keeping is moved into the ADR log rather than left in a draft.
 
 ## Current phase
 
@@ -51,7 +52,7 @@ Restate which of these are active before every task:
 
 ## Non-negotiables
 
-Full detail in `docs/planning/requirements.md` and `CONTRIBUTING.md`.
+Full detail in `CONTRIBUTING.md`.
 
 - No em dashes anywhere in any output
 - TypeScript strict, no `any`, no `@ts-ignore` without an ADR

@@ -25,6 +25,12 @@ indexer/pulsar-indexer
 coverage/
 *.out
 
+# Maintainer-local planning material. These are working drafts shared across
+# both Pulsar repos, not deliverables of this one. Only the README is tracked,
+# and it explains what the directory holds. Same policy as pulsar-core.
+docs/planning/*
+!docs/planning/README.md
+
 # Editor and OS noise
 .DS_Store
 .idea/
