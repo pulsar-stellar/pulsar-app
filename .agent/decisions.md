@@ -300,3 +300,43 @@ Phase A lands as specified, because no Phase A artifact names a Stellar dependen
 - Step 16 gains a prerequisite that is not in the build sequence: the verification pass and its ADR.
 - Sections 3.1 and 6 of the system prompt are provisional until that ADR lands. Do not treat their code samples as authoritative.
 - If the pinned version turns out not to exist, the pinned-version tables in section 3.1 need a correction pass, not a silent substitution.
+
+---
+
+## ADR-012: Node 22 LTS with pnpm 11, superseding the section 3.1 Node 20 pin
+Date: 2026-08-20
+Status: accepted
+
+### Context
+
+`docs/planning/system-prompt.md` section 3.1 pins Node.js at 20 LTS and pnpm at "9.x or newer". Both pins were written before the scaffold existed. They cannot both hold.
+
+pnpm 11 declares `engines.node >= 22.13` and calls `node:sqlite`, a built-in module Node 20 does not have. The first CI run on Node 20 with pnpm 11.1.3 failed at `pnpm/action-setup` with `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite`, before reaching a single project step. Checked against the registry: pnpm 9.15.9 and pnpm 10.34.5 declare `engines.node >= 18.12`, pnpm 11.21.0 and later declare `>= 22.13`.
+
+Separately, Node 20 reached end of maintenance in April 2026. Pinning it in August 2026 means building on a runtime that no longer receives security patches, and scheduling a forced migration into a later sprint.
+
+Section 3.1 says to halt on a pinned version that produces an install error and find the compatibility matrix rather than iterating version by version. This ADR is that halt's outcome.
+
+### Decision
+
+Node 22.x LTS with pnpm 11.x.
+
+- `.nvmrc` carries `22`
+- `package.json` sets `packageManager` to `pnpm@11.1.3` and `engines.node` to `>=22.13.0`
+- `pnpm-lock.yaml` is generated under pnpm 11
+- CI resolves Node from `.nvmrc`, so no workflow version literal needs maintaining
+
+This supersedes the Node and pnpm rows of section 3.1 for `pulsar-app`. Every other pin in that table stands.
+
+### Alternatives considered
+
+**Node 20 with pnpm 10.34.5.** Rejected. It satisfies section 3.1 exactly as written and is the only option that needs no deviation, but it adopts a runtime that stopped receiving security patches four months ago and defers the migration rather than avoiding it. A repo whose SECURITY.md is a submission deliverable should not build on an unsupported runtime to preserve a pin.
+
+**Node 24 with pnpm 11.** Rejected. Node 24 enters LTS in October 2026 and is not LTS today. This scaffold is the foundation for months of work, and pinning a non-LTS line for that adds risk with no benefit over Node 22.
+
+### Consequences
+
+- Contributors run `nvm install 22`. The machine this was scaffolded on carries Node 24, so the maintainer needs the install too.
+- Node 22 is in active LTS until October 2027, so the next forced runtime decision is more than a year out.
+- Section 3.1's Node and pnpm rows are superseded here and stay unchanged in `docs/planning/system-prompt.md`, which is shared planning material rather than a file this repo owns. Anyone reading that table for `pulsar-app` should read this ADR first.
+- The same conflict will reach `pulsar-core` only if it adopts a Node toolchain. It does not have one today.
