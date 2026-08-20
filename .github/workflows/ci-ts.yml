@@ -34,13 +34,13 @@ jobs:
         run: ./scripts/verify-env-parity.sh
 
       - name: Lint
-        run: pnpm -r lint
+        run: pnpm -r --if-present lint
 
       - name: Typecheck
-        run: pnpm -r typecheck
+        run: pnpm -r --if-present typecheck
 
       - name: Test
-        run: pnpm -r test
+        run: pnpm -r --if-present test
 
       - name: Build
-        run: pnpm -r build
+        run: pnpm -r --if-present build
