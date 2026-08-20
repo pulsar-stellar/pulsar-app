@@ -24,6 +24,8 @@ Everything authoritative is tracked. Read in this order:
 2. `.agent/context.md` — the state of the work, what is done, and what the next phase is gated on.
 3. `.agent/decisions.md` — the ADR log. Read it before proposing anything that contradicts a recorded decision. It is append-only.
 4. `.agent/glossary.md` — the domain terms used throughout.
+5. `docs/requirements.md` — project-wide standards across both repos. Where it is stricter than a file here, it wins; where a file here is stricter, that wins. A recorded ADR beats both.
+6. `docs/roadmap-product.md` — product context and where the work is heading.
 
 `docs/planning/` is not tracked. It holds maintainer-local drafts, including the system prompt whose section 12 carries the numbered build sequence, and it is absent from a fresh clone. See `docs/planning/README.md`, which is the only tracked file there. Where a draft and a tracked file disagree, the tracked file wins, and a decision worth keeping is moved into the ADR log rather than left in a draft.
 
