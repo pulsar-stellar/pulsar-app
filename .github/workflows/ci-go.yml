@@ -1,0 +1,52 @@
+name: ci-go
+
+on:
+  push:
+    branches: [main]
+    paths: ['indexer/**', '.github/workflows/ci-go.yml']
+  pull_request:
+    branches: [main]
+    paths: ['indexer/**', '.github/workflows/ci-go.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-go-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: indexer
+
+jobs:
+  check:
+    name: fmt, vet, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: indexer/go.mod
+          cache-dependency-path: indexer/go.sum
+
+      - name: Formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+        run: go build ./...

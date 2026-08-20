@@ -1,0 +1,42 @@
+name: ci-web
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/web/**', 'packages/sdk/**', '.github/workflows/ci-web.yml']
+  pull_request:
+    branches: [main]
+    paths: ['apps/web/**', 'packages/sdk/**', '.github/workflows/ci-web.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint, typecheck, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --filter ./apps/web lint
+
+      - name: Typecheck
+        run: pnpm --filter ./apps/web typecheck
+
+      - name: Build
+        run: pnpm --filter ./apps/web build
