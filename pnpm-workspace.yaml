@@ -1,0 +1,10 @@
+# Workspace members for the TypeScript side of pulsar-app.
+#
+# indexer/ is deliberately absent: it is a Go module with its own go.mod and its
+# own toolchain, so pnpm has nothing to install or build there. See ADR-002.
+#
+# Documentation lives in the separate pulsar-docs repo, so there is no apps/docs
+# member here. See ADR-009.
+packages:
+  - packages/*
+  - apps/*
