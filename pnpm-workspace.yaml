@@ -21,3 +21,10 @@ engineStrict: true
 
 # No implicit hoisting: a workspace may only import what it declares.
 shamefullyHoist: false
+
+# Postinstall scripts are blocked by default. These two are allowlisted because
+# they place a platform binary or a service worker file at install time and do
+# not work without it. Anything added here is a decision, not a default.
+allowBuilds:
+  esbuild: true
+  msw: true
