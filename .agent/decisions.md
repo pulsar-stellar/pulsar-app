@@ -472,3 +472,49 @@ Each of these reaches consumers through a different surface, which is what makes
 - Zod 4 idioms are used from the first schema. No 3.x compatibility layer is written.
 - The meta-principle, which generalizes past this decision: for a library other projects consume, "newest" is the wrong optimization and "compatible with the most consumers" is the right one. What that yields differs by how the dependency reaches the consumer. TypeScript reaches them through emitted `.d.ts`, where a newer major raises incompatibility risk, so compatibility means older. Zod reaches them through their dependency tree, where an older major raises duplicate-copy risk, so compatibility means newer. Same principle, opposite conclusions, because the surfaces differ. Ask which surface a dependency touches before asking how current to be.
 - This is the same discipline `pulsar-core` applies to wire shapes: once pinned, they are a consumer contract, not an implementation detail.
+
+---
+
+## ADR-016: DecodedEvent is wire-oriented, generated bindings are call-oriented
+Date: 2026-08-20
+Status: accepted
+
+### Context
+
+Generating TypeScript bindings for the showcase contract and comparing them against `types.ts` showed the two shapes do not compose. The binding emits:
+
+```ts
+export interface DepositEvent { name: "Deposit"; data: { from: string; amount: bigint } }
+```
+
+The contract's `events.rs` sets the wire shape explicitly:
+
+```rust
+#[contractevent(topics = ["deposit"], data_format = "single-value")]
+pub struct Deposit { #[topic] pub from: Address, pub amount: i128 }
+```
+
+Two divergences follow. The leading wire topic Symbol is `deposit`, lowercase, pinned in the annotation precisely so renaming the Rust struct cannot change the wire contract; the binding's `name` is `"Deposit"`, derived from the struct name. And `from` is marked `#[topic]`, so on the wire it is the second topic, while the binding places it inside `data`.
+
+Neither is a defect. They are two views of the same event. The binding is call-oriented: it describes the contract the way a caller invoking it thinks about it, with named fields and no topic-versus-data distinction. `DecodedEvent` is wire-oriented: it describes what the ledger actually holds.
+
+The hazard is a consumer holding both and assuming they interchange. Matching a `DecodedEvent.name` of `deposit` against the binding's `"Deposit"` literal silently never matches, and reading `from` out of `data` finds nothing because it is a topic.
+
+### Decision
+
+`DecodedEvent` stays wire-faithful. `name` is the decoded leading topic Symbol exactly as emitted, topics stay separate from data, and the raw XDR travels alongside as provenance.
+
+Converting between the two views is an explicit helper landing with `contract.ts` at step 34, opt-in for consumers who want both. It is never an implicit conversion, and no shape here is bent to make the two look interchangeable.
+
+### Alternatives considered
+
+**Align `DecodedEvent` to the binding shape.** Rejected. It would make the indexer report an event name that does not appear on the ledger. The decoder's whole value is that what it reports is what was emitted, checkable against the raw XDR it ships beside it. A capitalized name that matches no topic would break that.
+
+**Carry both names on every event, such as `name` and `typeName`.** Rejected. Two names on every event pushes the disambiguation onto every consumer on every event, including the majority who use one view. The confusion is worth solving once in a helper rather than in every consumer's matching logic.
+
+### Consequences
+
+- A consumer using both views writes two lines to bridge them. Explicit and visible beats implicit and surprising.
+- The step 34 helper carries the mapping's tests, including the case difference and the topic-versus-data split, since those are exactly what a hand-rolled bridge gets wrong.
+- The bindings composition check belongs to step 34, because it cannot be written before the helper it checks exists. Its design, settled here so it is not relitigated: generate bindings at test time into `tmp/test-fixtures/<hash>/`, gitignored, where the hash covers contract ID, network, and SDK version, so different inputs get different directories and identical inputs reuse one. Generated code is a build artifact, and a committed fixture would go stale against the deployment it claims to describe. Runtime generation also exercises the same command a consumer runs. The assertions are type-level, through `vitest --typecheck`, because the binding's event exports are interfaces and are erased at runtime. The test skips rather than fails when RPC is unreachable, so an outage does not turn CI red over something we do not control.
+- If a future contract change makes the two views diverge further, that surfaces in the step 34 test as a type error rather than in a consumer's silently empty match.
