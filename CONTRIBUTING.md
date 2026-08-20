@@ -40,7 +40,11 @@ Workspace members land in sequence as the build progresses, so a freshly cloned 
 
 ### pnpm-lock.yaml
 
-`pnpm-lock.yaml` is committed and is not generated output you may freely overwrite. Do not commit an incidental lock file update. If your change genuinely requires new or updated dependencies, land the lock change in its own commit whose message says which dependency moved and why, for example `build(deps): bump @stellar/stellar-sdk for getEvents cursor fix`. A lock diff that appears alongside unrelated work will be sent back.
+`pnpm-lock.yaml` is committed and is not generated output you may freely overwrite. Whether a lockfile change gets its own commit depends on whether it is coupled to a `package.json` change.
+
+**Uncoupled**, meaning the lockfile moved without a manifest edit: routine install churn, a security patch, a resolver behavior change. These land in their own commit whose message says which dependency moved and why, for example `build(deps): bump @stellar/stellar-sdk for getEvents cursor fix`. A lock diff that appears alongside unrelated work will be sent back.
+
+**Coupled**, meaning the lockfile change is a direct consequence of a `package.json` change in the same edit: adding a dependency, removing one, bumping a version. These land together, because the two are inseparable and splitting them pushes a commit whose `--frozen-lockfile` install cannot resolve. The commit body notes the coupling.
 
 The same applies to `indexer/go.sum`.
 

@@ -282,20 +282,23 @@ Never rewrite an entry. Supersede by appending.
 
 One-paragraph definitions of every domain term the repo uses. Updated when new terms enter the codebase.
 
-### 3.4 `.agent/test-strategy.md` (new)
+### 3.4 `.agent/test-strategy.md` (planned)
 
-Repo-specific restatement of Section 2 of this document. Includes:
+**Trigger**: write this file when app-specific testing rules emerge that do not fit the cross-repo methodology in `.agent/testing.md`. Until then that file and Section 2 of this document cover it, and a second file would only duplicate them.
+
+When triggered, it holds:
 
 - Coverage floors specific to this repo
 - Test types required per module in this repo
-- Fixture management policy
-- How to add new fixtures (with the ADR requirement restated)
+- Fixture management policy, and how to add a fixture
 - How to reproduce a CI test locally
 - Which test failures are known-flaky and their tracking issue
 
-### 3.5 `.agent/dependency-audit.md` (new)
+### 3.5 `.agent/dependency-audit.md` (planned)
 
-Table of every direct dependency:
+**Trigger**: write this file when the SDK has real dependencies to audit, expected at Phase C or D. Auditing a dependency list that is still only build tooling produces a table nobody reads and nobody updates.
+
+When triggered, it holds a table of every direct dependency:
 
 | Package | Version | Purpose | License | Last audited | Known CVEs |
 |---|---|---|---|---|---|
@@ -306,22 +309,11 @@ Table of every direct dependency:
 
 Any dependency addition or version bump requires an ADR entry cross-referenced from this table.
 
-### 3.6 `.agent/skills.md` (new)
+### 3.6 `.agent/external-tools.md` (planned)
 
-Documents which locally installed skills apply to this repo and when:
+**Trigger**: write this file when the Sprint 5 deploy integrates external services, such as monitoring or error tracking. Before that, Section 1 of this document is the full list and a repo-local restatement would drift from it.
 
-- `humanizer`: every text-output task (docs, commit messages, README updates)
-- `frontend-patterns`: every UI-related commit (pulsar-app only)
-- `coding-standards`: every code commit
-- `tdd-workflow`: every function or handler implementation
-- `blueprint`: architecture-level tasks (scaffolding, refactoring)
-- `security-review`: every commit touching auth, storage, HTTP boundaries, database queries, or dependency changes
-
-Plus a note that the built-in `frontend-design` skill applies to `apps/web` styling decisions.
-
-### 3.7 `.agent/external-tools.md` (new)
-
-Repo-specific restatement of Section 1 of this document. Only lists the tools actually used by this repo. For `pulsar-core`: GitHub, crates.io, Stellar Testnet, Stellar Expert, Telegram. For `pulsar-app`: everything else.
+When triggered, it restates Section 1 for this repo alone. For `pulsar-core`: GitHub, crates.io, Stellar Testnet, Stellar Expert, Telegram. For `pulsar-app`: everything else.
 
 Includes credential handling rules restated:
 
