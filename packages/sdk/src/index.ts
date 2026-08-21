@@ -16,6 +16,8 @@ export {
   type PulsarNetworkErrorOptions,
 } from './errors.js';
 
+export { request, type RequestOptions, type RequestResult } from './http.js';
+
 export {
   ContractIdSchema,
   ContractInfoSchema,
@@ -25,8 +27,11 @@ export {
   DEFAULT_TIMEOUT_MS,
   EVENT_QUERY_DEFAULT_LIMIT,
   EVENT_QUERY_MAX_LIMIT,
+  EnvelopeSchema,
+  ErrorEnvelopeSchema,
   EventPageSchema,
   EventQuerySchema,
+  HealthPayloadSchema,
   PulsarConfigSchema,
   PulsarNetworkSchema,
   type ContractInfo,
@@ -34,7 +39,10 @@ export {
   type DecodedEvent,
   type DecodedValue,
   type EventPage,
+  type Envelope,
+  type ErrorEnvelope,
   type EventQuery,
+  type PingResult,
   type PulsarConfig,
   type PulsarNetwork,
   type ResolvedEventQuery,

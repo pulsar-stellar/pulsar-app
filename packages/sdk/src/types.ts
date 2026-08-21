@@ -198,6 +198,68 @@ export type EventPage = z.infer<typeof EventPageSchema>;
  */
 const HTTP_PROTOCOL = /^https?$/;
 
+/**
+ * The envelope every indexer JSON response arrives in, per ADR-017.
+ *
+ * `data` carries the route's payload, `next_cursor` appears only on paginated
+ * responses, and `meta.took_ms` is the indexer's own measurement of how long it
+ * spent, which is not the round-trip latency the SDK measures.
+ *
+ * `data` is left unknown here and validated separately against the schema for
+ * the route. Splitting the two keeps this schema non-generic, and it separates
+ * "this is not an indexer response" from "this route returned the wrong shape",
+ * which are different failures worth different messages.
+ */
+export const EnvelopeSchema = z.object({
+  data: z.unknown(),
+  next_cursor: z.string().min(1).optional(),
+  meta: z.object({ took_ms: z.number().nonnegative() }).optional(),
+});
+
+/** A response envelope with its payload still unvalidated. */
+export type Envelope = z.infer<typeof EnvelopeSchema>;
+
+/** The error envelope the indexer returns for a failed request, per ADR-017. */
+export const ErrorEnvelopeSchema = z.object({
+  error: z.object({
+    code: z.enum(['not_found', 'validation', 'internal', 'rate_limited']),
+    message: z.string(),
+  }),
+});
+
+/** A failure reported by the indexer in its error envelope. */
+export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>;
+
+/**
+ * The indexer's health payload, as it appears on the wire.
+ *
+ * snake_case here and camelCase in {@link PingResult}: the boundary between the
+ * two is this schema, so neither the Go side nor a TypeScript caller has to
+ * work in the other's conventions.
+ */
+export const HealthPayloadSchema = z.object({
+  ok: z.boolean(),
+  version: z.string().min(1),
+  latest_ledger: z.number().int().nonnegative().nullable().optional(),
+  tracked_contracts: z.number().int().nonnegative().nullable().optional(),
+});
+
+/** What `PulsarClient.ping` returns. */
+export interface PingResult {
+  /** Whether the indexer reports itself healthy. */
+  readonly ok: boolean;
+  /** The indexer's version string. */
+  readonly version: string;
+  /** Highest ledger the indexer has processed, or null if it has none yet. */
+  readonly latestLedger: number | null;
+  /** How many contracts it is following, or null if it did not say. */
+  readonly trackedContracts: number | null;
+  /** Round-trip time measured by the SDK, in milliseconds. */
+  readonly latencyMs: number;
+  /** The indexer's own timing, in milliseconds, or null if it did not report one. */
+  readonly serverTookMs: number | null;
+}
+
 /** The default request timeout, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
