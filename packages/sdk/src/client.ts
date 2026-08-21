@@ -14,6 +14,8 @@ import {
   ContractIdSchema,
   ContractInfoPayloadSchema,
   ContractListPayloadSchema,
+  DecodedEventPayloadSchema,
+  EventIdSchema,
   EventListPayloadSchema,
   EventQuerySchema,
   HealthPayloadSchema,
@@ -297,6 +299,43 @@ export class PulsarClient {
       [Symbol.asyncIterator]: (): AsyncIterator<DecodedEvent> =>
         this.#streamEvents(contractId, query),
     };
+  }
+
+  /**
+   * Fetches one decoded event by its identifier.
+   *
+   * Event ids are unique across the indexer, so no contract is needed to
+   * resolve one. A caller holding an id from a previous query can fetch it
+   * without knowing which contract emitted it.
+   *
+   * Returns null when the indexer has no such event, which per ADR-019 means a
+   * 404 carrying a `not_found` envelope. A bare 404 throws.
+   *
+   * @param eventId - The event's identifier, a string of digits. It is opaque
+   * and is never parsed into a number, since the underlying key can exceed
+   * what a JavaScript number holds exactly.
+   * @throws {PulsarValidationError} if the id is malformed, or if the response
+   * is not the shape this SDK version expects.
+   * @throws {PulsarNetworkError} if the indexer is unreachable, times out, or
+   * fails in any way other than a well-formed absence.
+   */
+  async event(eventId: string): Promise<DecodedEvent | null> {
+    const validated = EventIdSchema.safeParse(eventId);
+
+    if (!validated.success) {
+      throw PulsarValidationError.fromZodError(validated.error, {
+        operation: 'client.event',
+        details: { eventId },
+      });
+    }
+
+    const result = await requestMaybe(this.#config, {
+      path: `/events/${encodeURIComponent(validated.data)}`,
+      schema: DecodedEventPayloadSchema,
+      operation: 'client.event',
+    });
+
+    return result === null ? null : toDecodedEvent(result.data);
   }
 
   /** Walks pages until the cursor runs out, yielding each event in turn. */

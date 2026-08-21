@@ -250,6 +250,19 @@ export const DecodedEventPayloadSchema = z.object({
   emitted_at: z.iso.datetime({ offset: true }),
 });
 
+/**
+ * A decoded event's identifier as the SDK accepts it.
+ *
+ * A string of digits, because the indexer's `events` table uses `BIGSERIAL`
+ * and ids past 2^53 cannot survive a JSON number; see ADR-021. Validated as
+ * digits rather than any string so an obviously wrong value, such as a
+ * transaction hash or an empty string, is caught before a request goes out.
+ * The SDK still treats the value as opaque and never parses it into a number.
+ */
+export const EventIdSchema = z
+  .string()
+  .regex(/^\d+$/, { error: 'Event ID must be a string of digits' });
+
 /** The payload `GET /contracts/:id/events` returns. */
 export const EventListPayloadSchema = z.object({
   items: z.array(DecodedEventPayloadSchema),

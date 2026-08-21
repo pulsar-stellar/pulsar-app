@@ -38,6 +38,7 @@ export {
   EnvelopeSchema,
   ErrorEnvelopeSchema,
   DecodedEventPayloadSchema,
+  EventIdSchema,
   EventListPayloadSchema,
   EventQuerySchema,
   HealthPayloadSchema,

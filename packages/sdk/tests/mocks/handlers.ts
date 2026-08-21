@@ -73,9 +73,14 @@ export const eventHandlers = [
   ),
 ];
 
+export const singleEventHandlers = [
+  http.get(`${BASE}/events/:eventId`, () => HttpResponse.json({ data: eventPayload })),
+];
+
 export const handlers = [
   ...healthHandlers,
   ...contractHandlers,
   ...contractReadHandlers,
   ...eventHandlers,
+  ...singleEventHandlers,
 ];
