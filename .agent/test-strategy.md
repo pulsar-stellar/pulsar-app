@@ -26,6 +26,16 @@ A command moved to the background can also be stopped without leaving any record
 
 This came out of step 18 as well. A coverage run was backgrounded, left no completion record, and the checks were rerun from scratch before the commit rather than trusting the interrupted output.
 
+## Schema tests need plausible-wrong inputs
+
+An input that is obviously wrong proves almost nothing. Rejecting `/relative/path` proves the schema rejects nonsense, and accepting `https://example.com` proves the happy case. Neither says anything about `localhost:8080`, `ftp://internal/`, or `javascript:void(0)`.
+
+Plausible-wrong inputs are the shapes an inattentive caller actually produces: a URL with the scheme left off, a capitalized enum value, a number where a string was meant, an ID pasted one character short. They sit close enough to correct that a permissive schema waves them through, and they are what a validator exists to catch. Cover them explicitly.
+
+This came out of step 20. `PulsarConfigSchema` accepted `localhost:8080`, which the URL parser reads as protocol `localhost:`, along with `ftp://` and `javascript:`. Step 17's tests had only checked that a relative path was rejected, so a schema that would have built a client failing at its first request passed a full test suite and a coverage gate.
+
+The general form: when writing a rejection test, ask what a hurried caller would actually type, not what a fuzzer would generate.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
