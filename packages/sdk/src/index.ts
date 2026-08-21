@@ -16,12 +16,19 @@ export {
   type PulsarNetworkErrorOptions,
 } from './errors.js';
 
-export { request, type HttpMethod, type RequestOptions, type RequestResult } from './http.js';
+export {
+  request,
+  requestMaybe,
+  type HttpMethod,
+  type RequestOptions,
+  type RequestResult,
+} from './http.js';
 
 export {
   ContractIdSchema,
   ContractInfoPayloadSchema,
   ContractInfoSchema,
+  ContractListPayloadSchema,
   ContractStatusSchema,
   DecodedEventSchema,
   DecodedValueSchema,

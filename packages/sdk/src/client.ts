@@ -9,10 +9,11 @@
  */
 
 import { PulsarValidationError } from './errors.js';
-import { request } from './http.js';
+import { request, requestMaybe } from './http.js';
 import {
   ContractIdSchema,
   ContractInfoPayloadSchema,
+  ContractListPayloadSchema,
   HealthPayloadSchema,
   PulsarConfigSchema,
   toContractInfo,
@@ -137,5 +138,64 @@ export class PulsarClient {
     });
 
     return toContractInfo(result.data);
+  }
+
+  /**
+   * Looks up one contract the indexer is tracking.
+   *
+   * Returns null when the indexer says it is not tracking that contract, which
+   * per ADR-019 means a 404 carrying a `not_found` envelope. A 404 without
+   * that envelope is a routing or proxy problem rather than an absent record,
+   * and throws.
+   *
+   * @param contractId - A Soroban contract ID.
+   * @throws {PulsarValidationError} if the contract ID is malformed, or if the
+   * response is not the shape this SDK version expects.
+   * @throws {PulsarNetworkError} if the indexer is unreachable, times out, or
+   * fails in any way other than a well-formed absence.
+   */
+  async getContract(contractId: string): Promise<ContractInfo | null> {
+    const validated = ContractIdSchema.safeParse(contractId);
+
+    if (!validated.success) {
+      throw PulsarValidationError.fromZodError(validated.error, {
+        operation: 'client.getContract',
+        details: { contractId },
+      });
+    }
+
+    const result = await requestMaybe(this.#config, {
+      path: `/contracts/${encodeURIComponent(validated.data)}`,
+      schema: ContractInfoPayloadSchema,
+      operation: 'client.getContract',
+    });
+
+    return result === null ? null : toContractInfo(result.data);
+  }
+
+  /**
+   * Lists every contract the indexer is tracking.
+   *
+   * Takes no arguments and is not paginated. The tracked-contract list is
+   * bounded by what an operator has registered, unlike event history, which
+   * grows with protocol activity.
+   *
+   * An empty list is an empty array, not null: the indexer answered, and the
+   * answer is that it tracks nothing yet. Absence of a resource and absence of
+   * contents are different facts.
+   *
+   * @throws {PulsarNetworkError} if the indexer is unreachable, times out,
+   * returns a non-success status, or answers with something that is not JSON.
+   * @throws {PulsarValidationError} if the response is not the shape this SDK
+   * version expects.
+   */
+  async listContracts(): Promise<ContractInfo[]> {
+    const result = await request(this.#config, {
+      path: '/contracts',
+      schema: ContractListPayloadSchema,
+      operation: 'client.listContracts',
+    });
+
+    return result.data.items.map(toContractInfo);
   }
 }

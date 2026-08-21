@@ -42,4 +42,11 @@ export const contractHandlers = [
   ),
 ];
 
-export const handlers = [...healthHandlers, ...contractHandlers];
+export const contractReadHandlers = [
+  http.get(`${BASE}/contracts`, () =>
+    HttpResponse.json({ data: { items: [trackedContractPayload] }, meta: { took_ms: 3 } }),
+  ),
+  http.get(`${BASE}/contracts/:id`, () => HttpResponse.json({ data: trackedContractPayload })),
+];
+
+export const handlers = [...healthHandlers, ...contractHandlers, ...contractReadHandlers];

@@ -150,6 +150,17 @@ export const ContractInfoPayloadSchema = z.object({
   status: ContractStatusSchema,
 });
 
+/**
+ * The payload `GET /contracts` returns.
+ *
+ * Note the extra nesting: the envelope's `data` holds `{ items: [...] }`
+ * rather than the array directly, per section 7.2. Single-contract routes put
+ * the record straight in `data`, so the two are not interchangeable.
+ */
+export const ContractListPayloadSchema = z.object({
+  items: z.array(ContractInfoPayloadSchema),
+});
+
 /** Converts a wire payload into the camelCase shape callers see. */
 export function toContractInfo(payload: z.infer<typeof ContractInfoPayloadSchema>): ContractInfo {
   return {

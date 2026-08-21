@@ -82,10 +82,11 @@ async function readJson(
  * @throws {PulsarValidationError} if the body is JSON but does not match the
  * expected shape.
  */
-export async function request<T extends z.ZodTypeAny>(
+async function send<T extends z.ZodTypeAny>(
   config: ResolvedPulsarConfig,
   options: RequestOptions<T>,
-): Promise<RequestResult<z.infer<T>>> {
+  allowNotFound: boolean,
+): Promise<RequestResult<z.infer<T>> | null> {
   const url = buildUrl(config.indexerUrl, options.path);
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   const startedAt = performance.now();
@@ -116,11 +117,29 @@ export async function request<T extends z.ZodTypeAny>(
 
   const asError = ErrorEnvelopeSchema.safeParse(body);
   if (asError.success) {
-    throw new PulsarNetworkError(`Indexer reported ${asError.data.error.code}`, {
+    const { code, message } = asError.data.error;
+    const details = { code, indexerMessage: message };
+
+    // Absence, per ADR-019: only a 404 carrying not_found counts, and only
+    // where the calling method is documented to return null.
+    if (allowNotFound && response.status === 404 && code === 'not_found') {
+      return null;
+    }
+
+    // A success status carrying an error envelope is the server contradicting
+    // itself. The transport worked, so this is a response-shape problem.
+    if (response.ok) {
+      throw new PulsarValidationError(
+        `Indexer returned HTTP ${response.status} with a ${code} error envelope`,
+        { operation: options.operation, details: { ...details, url, stage: 'envelope' } },
+      );
+    }
+
+    throw new PulsarNetworkError(`Indexer reported ${code}`, {
       operation: options.operation,
       status: response.status,
       url,
-      details: { code: asError.data.error.code, indexerMessage: asError.data.error.message },
+      details,
     });
   }
 
@@ -154,4 +173,46 @@ export async function request<T extends z.ZodTypeAny>(
     serverTookMs: envelope.data.meta?.took_ms ?? null,
     nextCursor: envelope.data.next_cursor ?? null,
   };
+}
+
+/**
+ * Sends a request that must produce a result.
+ *
+ * @throws {PulsarNetworkError} on any transport failure, non-success status,
+ * non-JSON body, or error envelope, including a 404.
+ * @throws {PulsarValidationError} if the body does not match the expected
+ * shape, or if a success status arrives carrying an error envelope.
+ */
+export async function request<T extends z.ZodTypeAny>(
+  config: ResolvedPulsarConfig,
+  options: RequestOptions<T>,
+): Promise<RequestResult<z.infer<T>>> {
+  const result = await send(config, options, false);
+
+  // Unreachable: send only returns null when allowNotFound is true. Asserting
+  // it here keeps the caller's type free of a null it can never receive.
+  /* v8 ignore next 3 */
+  if (result === null) {
+    throw new PulsarNetworkError('Request unexpectedly reported absence', {
+      operation: options.operation,
+      status: null,
+      url: options.path,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Sends a request whose resource may legitimately not exist.
+ *
+ * Returns null only for a 404 carrying a `not_found` envelope, per ADR-019.
+ * Every other failure throws, including a bare 404, so a routing problem is
+ * never mistaken for an absent record.
+ */
+export async function requestMaybe<T extends z.ZodTypeAny>(
+  config: ResolvedPulsarConfig,
+  options: RequestOptions<T>,
+): Promise<RequestResult<z.infer<T>> | null> {
+  return send(config, options, true);
 }
