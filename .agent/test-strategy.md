@@ -94,6 +94,16 @@ This came out of step 28 and is recorded as ADR-021. The indexer's `events` tabl
 
 A related trap when writing the test itself: a numeric literal in TypeScript source is subject to the same rounding, so comparing a parsed value against a literal above 2^53 compares two already-rounded numbers and proves nothing. Assert on the string form instead.
 
+## Poll CI with backoff, not a tight loop
+
+Waiting on a workflow with `until gh run list ...; do sleep 8; done` sends a request every few seconds for as long as the run takes. Repeated across many commits, that trips GitHub's secondary rate limit, and the 403 it returns then blocks the status check for several minutes, which is longer than the run being waited on.
+
+The core quota is not the constraint. A secondary limit fires on request *rate* while `gh api rate_limit` still reports thousands remaining, so the quota reading is not a signal that polling is safe.
+
+Wait once for a realistic duration and then check, rather than polling continuously. A workflow that takes 30 seconds deserves one check after 45, not five checks. When a check does come back limited, stop rather than retrying: retrying is what extends the cooldown.
+
+This came out of step 29, after roughly a dozen commits each followed by a polling loop.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
