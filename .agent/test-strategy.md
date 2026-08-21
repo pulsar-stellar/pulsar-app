@@ -36,7 +36,7 @@ do {
 
 Bounded execution applies to loops inside a test, not only to the suite as a whole. Pick a cap far above any legitimate run, 100 pages rather than 5 where the real ceiling is unknown, so the bound catches non-termination without ever firing on correct behavior.
 
-Count the right thing. A cap on items collected does not bound a loop that refetches an empty page forever, because such a loop yields nothing and the counter never moves. Bound the requests instead, in the mock handler, where every attempt is visible whether or not it produced anything:
+Count on the dimension a mutation moves, not the dimension the happy path produces. A passing run produces items, so items are the tempting thing to count, but a mutation can leave that number flat forever: a loop refetching an empty page yields nothing while requests grow without bound. The bound has to sit where every attempt is visible whether or not it produced anything, which for HTTP means the mock handler:
 
 ```ts
 http.get(route, () => {
@@ -48,7 +48,7 @@ http.get(route, () => {
 });
 ```
 
-Step 29 hit exactly this: an item-based cap caught the mutation that stopped following the cursor, and hung on the one that removed the end-of-pages check, because that version looped on an empty page.
+Step 29 hit exactly this, and the two mutations separate the dimensions cleanly. Dropping the cursor follow still yielded items, so an item-based cap caught it. Removing the end-of-pages check looped on an empty page, yielding nothing, so the same cap never fired and the runner hung. Only the request count moved under both.
 
 This came out of step 28. Mutating the events method to drop the cursor from its outgoing query hung the runner, because the test kept fetching page one and reading the same cursor back. With the bound, the same mutation fails in under a second and names the reason.
 
@@ -94,15 +94,15 @@ This came out of step 28 and is recorded as ADR-021. The indexer's `events` tabl
 
 A related trap when writing the test itself: a numeric literal in TypeScript source is subject to the same rounding, so comparing a parsed value against a literal above 2^53 compares two already-rounded numbers and proves nothing. Assert on the string form instead.
 
-## Poll CI with backoff, not a tight loop
+## An external system's visible metric is often not its constraining one
 
-Waiting on a workflow with `until gh run list ...; do sleep 8; done` sends a request every few seconds for as long as the run takes. Repeated across many commits, that trips GitHub's secondary rate limit, and the 403 it returns then blocks the status check for several minutes, which is longer than the run being waited on.
+External services enforce several limits at once, and they are usually orthogonal. GitHub has a primary quota, an hourly request budget, and a separate secondary limit that fires on request *rate* to catch bursts. Exhausting either returns 403, and the two are not related.
 
-The core quota is not the constraint. A secondary limit fires on request *rate* while `gh api rate_limit` still reports thousands remaining, so the quota reading is not a signal that polling is safe.
+The specific confusion to avoid: reading the quota, seeing thousands of requests remaining, and concluding that polling is safe. `gh api rate_limit` reported 4985 of 5000 remaining while every call to the runs endpoint returned 403. The visible metric was not the one doing the constraining, so checking it gave false reassurance.
 
-Wait once for a realistic duration and then check, rather than polling continuously. A workflow that takes 30 seconds deserves one check after 45, not five checks. When a check does come back limited, stop rather than retrying: retrying is what extends the cooldown.
+When polling any external system, wait once for a realistic duration and then check once. A workflow that takes 30 seconds deserves one check after 45, not five checks. When a check does come back limited, stop rather than retrying: retrying is what extends the cooldown, and it is also what makes the failure look intermittent rather than caused.
 
-This came out of step 29, after roughly a dozen commits each followed by a polling loop.
+This came out of step 29, after roughly a dozen commits each followed by an `until gh run list ...; do sleep 8; done` loop.
 
 ## Where the two kinds of test live
 
