@@ -119,7 +119,7 @@ describe('the thrown error carries usable context', () => {
 
   it('reports every issue at once rather than only the first', () => {
     try {
-      new PulsarClient({ indexerUrl: 'localhost:8080', network: 'Testnet' as never } as never);
+      new PulsarClient({ indexerUrl: 'localhost:8080', network: 'Testnet' } as never);
       expect.unreachable('constructor should have thrown');
     } catch (error) {
       expect((error as PulsarValidationError).issues.length).toBeGreaterThan(1);

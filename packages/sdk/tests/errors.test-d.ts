@@ -4,7 +4,7 @@ import {
   findPulsarError,
   PulsarError,
   PulsarNetworkError,
-  PulsarValidationError,
+  type PulsarValidationError,
 } from '../src/errors.js';
 
 describe('PulsarError is abstract', () => {

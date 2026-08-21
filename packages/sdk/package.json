@@ -55,6 +55,7 @@
     "vitest": "4.1.11"
   },
   "scripts": {
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --typecheck",
     "test:coverage": "vitest run --coverage"
