@@ -179,7 +179,11 @@ export const EVENT_QUERY_MAX_LIMIT = 500;
 export const EVENT_QUERY_DEFAULT_LIMIT = 50;
 
 /**
- * A query against the indexer's event history.
+ * Filters for a query against one contract's event history.
+ *
+ * The contract is not part of this shape. It is a path parameter on the route,
+ * so it is a separate argument to `events`, which keeps the type aligned with
+ * the wire: path params in the path, filters in the query string.
  *
  * Strict: an unrecognized key is an error rather than a silently ignored
  * field, because a typo in a filter would otherwise return a confidently wrong
@@ -191,7 +195,6 @@ export const EVENT_QUERY_DEFAULT_LIMIT = 50;
  * retention window. See ADR-013.
  */
 export const EventQuerySchema = z.strictObject({
-  contractId: ContractIdSchema,
   /** Event name to match exactly, such as `transfer`. */
   name: z.string().min(1).optional(),
   fromLedger: z.number().int().nonnegative().optional(),
@@ -214,15 +217,60 @@ export type EventQuery = z.input<typeof EventQuerySchema>;
  */
 export type ResolvedEventQuery = z.output<typeof EventQuerySchema>;
 
-/** One page of events, with the cursor that fetches the next one. */
-export const EventPageSchema = z.object({
-  items: z.array(DecodedEventSchema),
-  /** Absent when the page is the last one. */
-  nextCursor: z.string().min(1).optional(),
+/**
+ * One page of events, with the cursor that fetches the next one.
+ *
+ * `nextCursor` is null on the last page. Null and an absent wire field both
+ * arrive here as null, per ADR-021, so a caller pages until it sees null and
+ * never has to check two falsy values.
+ */
+export interface EventsPage {
+  readonly items: DecodedEvent[];
+  readonly nextCursor: string | null;
+}
+
+/**
+ * A decoded event as it appears on the wire.
+ *
+ * snake_case per ADR-017, matching the indexer's `events` table columns. The
+ * identifier is a string because that table uses `BIGSERIAL`, whose range
+ * exceeds what a JSON number carries safely; see ADR-021.
+ */
+export const DecodedEventPayloadSchema = z.object({
+  id: z.string().min(1),
+  contract_id: ContractIdSchema,
+  ledger: z.number().int().nonnegative(),
+  tx_hash: z.string().min(1),
+  event_index: z.number().int().nonnegative(),
+  name: z.string().min(1),
+  topics_json: z.array(DecodedValueSchema),
+  data_json: DecodedValueSchema,
+  raw_topics: z.array(z.string()),
+  raw_data: z.string(),
+  emitted_at: z.iso.datetime({ offset: true }),
 });
 
-/** A page of decoded events. */
-export type EventPage = z.infer<typeof EventPageSchema>;
+/** The payload `GET /contracts/:id/events` returns. */
+export const EventListPayloadSchema = z.object({
+  items: z.array(DecodedEventPayloadSchema),
+});
+
+/** Converts a wire event into the camelCase shape callers see. */
+export function toDecodedEvent(payload: z.infer<typeof DecodedEventPayloadSchema>): DecodedEvent {
+  return {
+    id: payload.id,
+    contractId: payload.contract_id,
+    ledger: payload.ledger,
+    txHash: payload.tx_hash,
+    eventIndex: payload.event_index,
+    name: payload.name,
+    topics: payload.topics_json,
+    data: payload.data_json,
+    rawTopics: payload.raw_topics,
+    rawData: payload.raw_data,
+    emittedAt: payload.emitted_at,
+  };
+}
 
 /**
  * The only schemes the SDK will send a request to.
@@ -249,7 +297,9 @@ const HTTP_PROTOCOL = /^https?$/;
  */
 export const EnvelopeSchema = z.object({
   data: z.unknown(),
-  next_cursor: z.string().min(1).optional(),
+  // Null and absent both mean the same thing, per ADR-021: there is no next
+  // page. An empty string is not a valid cursor and is rejected.
+  next_cursor: z.string().min(1).nullish(),
   meta: z.object({ took_ms: z.number().nonnegative() }).optional(),
 });
 

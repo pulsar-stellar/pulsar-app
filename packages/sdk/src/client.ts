@@ -14,10 +14,15 @@ import {
   ContractIdSchema,
   ContractInfoPayloadSchema,
   ContractListPayloadSchema,
+  EventListPayloadSchema,
+  EventQuerySchema,
   HealthPayloadSchema,
   PulsarConfigSchema,
   toContractInfo,
+  toDecodedEvent,
   type ContractInfo,
+  type EventQuery,
+  type EventsPage,
   type PingResult,
   type PulsarConfig,
   type ResolvedPulsarConfig,
@@ -197,5 +202,67 @@ export class PulsarClient {
     });
 
     return result.data.items.map(toContractInfo);
+  }
+
+  /**
+   * Queries one contract's decoded event history.
+   *
+   * Paging is by opaque cursor: pass `nextCursor` from a page back as
+   * `query.cursor` to get the next one, and stop when `nextCursor` is null.
+   * The cursor is never interpreted here, so the indexer can change its
+   * encoding without breaking a caller.
+   *
+   * A contract the indexer is not tracking throws rather than returning an
+   * empty page, per ADR-021. "Not indexed" and "no matching events" are
+   * different facts, and the most common integration mistake, querying a
+   * contract nobody registered, should not look like a valid empty result.
+   *
+   * @param contractId - The contract whose events to read.
+   * @param query - Optional filters. Every field is optional; `limit` and
+   * `order` take defaults when omitted.
+   * @throws {PulsarValidationError} if the contract ID or the query is
+   * malformed, or if the response is not the shape this SDK version expects.
+   * @throws {PulsarNetworkError} if the indexer is unreachable, times out, or
+   * returns a non-success status, including the 404 for an untracked contract.
+   */
+  async events(contractId: string, query?: EventQuery): Promise<EventsPage> {
+    const validatedId = ContractIdSchema.safeParse(contractId);
+
+    if (!validatedId.success) {
+      throw PulsarValidationError.fromZodError(validatedId.error, {
+        operation: 'client.events',
+        details: { contractId },
+      });
+    }
+
+    const validatedQuery = EventQuerySchema.safeParse(query ?? {});
+
+    if (!validatedQuery.success) {
+      throw PulsarValidationError.fromZodError(validatedQuery.error, {
+        operation: 'client.events',
+        details: { contractId },
+      });
+    }
+
+    const filters = validatedQuery.data;
+    const result = await request(this.#config, {
+      path: `/contracts/${encodeURIComponent(validatedId.data)}/events`,
+      schema: EventListPayloadSchema,
+      operation: 'client.events',
+      query: {
+        name: filters.name,
+        from_ledger: filters.fromLedger,
+        to_ledger: filters.toLedger,
+        topic_contains: filters.topicContains,
+        limit: filters.limit,
+        cursor: filters.cursor,
+        order: filters.order,
+      },
+    });
+
+    return {
+      items: result.data.items.map(toDecodedEvent),
+      nextCursor: result.nextCursor,
+    };
   }
 }

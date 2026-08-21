@@ -19,8 +19,8 @@ import type {
  * and emits `undefined`. These assertions pin the direction.
  */
 describe('EventQuery input and output', () => {
-  it('lets a caller omit the fields the schema defaults', () => {
-    assertType<EventQuery>({ contractId: 'C'.padEnd(56, 'A') });
+  it('lets a caller omit every field, since all of them are filters', () => {
+    assertType<EventQuery>({});
   });
 
   it('guarantees limit and order are present after parsing', () => {

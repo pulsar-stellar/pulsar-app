@@ -25,6 +25,27 @@ describe('URL building', () => {
   });
 });
 
+describe('query strings', () => {
+  it('omits the question mark when every parameter is undefined', async () => {
+    let seenUrl = '';
+    server.use(
+      http.get(`${INDEXER_URL}/health`, ({ request }) => {
+        seenUrl = request.url;
+        return HttpResponse.json({ data: { ok: true } });
+      }),
+    );
+
+    await request(config, {
+      path: '/health',
+      schema,
+      operation: 'test',
+      query: { name: undefined, limit: undefined },
+    });
+
+    expect(seenUrl).toBe(`${INDEXER_URL}/health`);
+  });
+});
+
 describe('envelope handling', () => {
   it('reports null for a cursor on a response that does not paginate', async () => {
     server.use(http.get(`${INDEXER_URL}/health`, () => HttpResponse.json({ data: { ok: true } })));

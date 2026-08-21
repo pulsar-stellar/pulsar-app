@@ -30,6 +30,8 @@ export interface RequestOptions<T extends z.ZodTypeAny> {
   readonly method?: HttpMethod;
   /** Serialized as JSON. Omit for a request with no body. */
   readonly body?: unknown;
+  /** Query string parameters. Undefined values are omitted, not sent empty. */
+  readonly query?: Readonly<Record<string, string | number | undefined>>;
 }
 
 /** A validated response, with the timings that came with it. */
@@ -43,9 +45,33 @@ export interface RequestResult<T> {
   readonly nextCursor: string | null;
 }
 
-/** Joins the configured base URL to a path without doubling or dropping a slash. */
-function buildUrl(baseUrl: string, path: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+/**
+ * Joins the configured base URL to a path and query without doubling or
+ * dropping a slash.
+ *
+ * A parameter set to undefined is omitted rather than sent empty, so an
+ * unspecified filter never reaches the indexer as `?name=`, which would filter
+ * on the empty string.
+ */
+function buildUrl(
+  baseUrl: string,
+  path: string,
+  query?: Readonly<Record<string, string | number | undefined>>,
+): string {
+  const base = `${baseUrl.replace(/\/+$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+  if (query === undefined) {
+    return base;
+  }
+
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      params.set(key, String(value));
+    }
+  }
+
+  const serialized = params.toString();
+  return serialized === '' ? base : `${base}?${serialized}`;
 }
 
 /**
@@ -87,7 +113,7 @@ async function send<T extends z.ZodTypeAny>(
   options: RequestOptions<T>,
   allowNotFound: boolean,
 ): Promise<RequestResult<z.infer<T>> | null> {
-  const url = buildUrl(config.indexerUrl, options.path);
+  const url = buildUrl(config.indexerUrl, options.path, options.query);
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   const startedAt = performance.now();
 

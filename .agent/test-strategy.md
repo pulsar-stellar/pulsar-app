@@ -18,6 +18,24 @@ or wrap the command with `timeout`. The mutation still proves the guard is load-
 
 This came out of step 18. Removing the cause-cycle guard from `findPulsarError` hung the runner until it was killed after two minutes, which proved the point at the cost of the session's attention.
 
+### The test's own loops need bounds too
+
+The same applies to loops inside a test, not just to guards in the code under test. A paging test that walks until a cursor runs out will run forever if the code stops advancing the cursor, and that is exactly the regression the test exists to catch.
+
+Bound the loop with a maximum iteration count and assert it, so the failure reports itself:
+
+```ts
+const maxPages = 5;
+let requests = 0;
+do {
+  requests += 1;
+  expect(requests, 'paging did not terminate').toBeLessThanOrEqual(maxPages);
+  // ...
+} while (cursor !== undefined);
+```
+
+This came out of step 28. Mutating the events method to drop the cursor from its outgoing query hung the runner, because the test kept fetching page one and reading the same cursor back. With the bound, the same mutation fails in under a second and names the reason.
+
 ## Trust but verify a background command
 
 An operation that outlives the window in which it was watched does not get to be assumed complete. Installs, builds, deploys, and coverage runs all qualify. If subsequent work depends on its output, run a fresh verification pass first rather than reading the last output you happened to see.

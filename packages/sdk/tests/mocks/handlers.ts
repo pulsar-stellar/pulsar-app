@@ -49,4 +49,33 @@ export const contractReadHandlers = [
   http.get(`${BASE}/contracts/:id`, () => HttpResponse.json({ data: trackedContractPayload })),
 ];
 
-export const handlers = [...healthHandlers, ...contractHandlers, ...contractReadHandlers];
+/** A decoded event as the indexer serves it, snake_case per ADR-017. */
+export const eventPayload = {
+  id: '9007199254740993',
+  contract_id: trackedContractPayload.id,
+  ledger: 1_234_567,
+  tx_hash: 'ab'.repeat(32),
+  event_index: 0,
+  name: 'deposit',
+  topics_json: [
+    { type: 'symbol', value: 'deposit' },
+    { type: 'address', value: trackedContractPayload.id },
+  ],
+  data_json: { type: 'i128', value: '1000000000' },
+  raw_topics: ['AAAADwAAAAdkZXBvc2l0AA=='],
+  raw_data: 'AAAACgAAAAAAAAAAAAAAADuaygA=',
+  emitted_at: '2026-08-21T09:15:00Z',
+} as const;
+
+export const eventHandlers = [
+  http.get(`${BASE}/contracts/:id/events`, () =>
+    HttpResponse.json({ data: { items: [eventPayload] }, next_cursor: null }),
+  ),
+];
+
+export const handlers = [
+  ...healthHandlers,
+  ...contractHandlers,
+  ...contractReadHandlers,
+  ...eventHandlers,
+];

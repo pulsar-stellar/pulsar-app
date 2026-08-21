@@ -144,28 +144,27 @@ describe('ContractInfoSchema', () => {
 
 describe('EventQuerySchema', () => {
   it('fills in the default limit and order', () => {
-    const parsed = EventQuerySchema.parse({ contractId: SHOWCASE_ID });
+    const parsed = EventQuerySchema.parse({});
     expect(parsed.limit).toBe(EVENT_QUERY_DEFAULT_LIMIT);
     expect(parsed.order).toBe('desc');
   });
 
   it('rejects an unknown key rather than ignoring a typo', () => {
-    const result = EventQuerySchema.safeParse({ contractId: SHOWCASE_ID, contractid: 'x' });
+    const result = EventQuerySchema.safeParse({ contractid: 'x' });
     expect(result.success).toBe(false);
   });
 
   it('rejects a limit above the maximum page size', () => {
-    const bad = { contractId: SHOWCASE_ID, limit: EVENT_QUERY_MAX_LIMIT + 1 };
+    const bad = { limit: EVENT_QUERY_MAX_LIMIT + 1 };
     expect(EventQuerySchema.safeParse(bad).success).toBe(false);
   });
 
   it('rejects a limit of zero', () => {
-    expect(EventQuerySchema.safeParse({ contractId: SHOWCASE_ID, limit: 0 }).success).toBe(false);
+    expect(EventQuerySchema.safeParse({ limit: 0 }).success).toBe(false);
   });
 
   it('accepts a cursor alongside a ledger range, unlike Soroban RPC getEvents', () => {
     const parsed = EventQuerySchema.parse({
-      contractId: SHOWCASE_ID,
       cursor: 'opaque-cursor',
       fromLedger: 100,
       toLedger: 200,
