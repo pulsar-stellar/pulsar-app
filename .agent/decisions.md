@@ -661,3 +661,42 @@ The SDK's `getContract` routes to this endpoint.
 - Phase D implements this handler symmetrically with the existing `DELETE /contracts/:id`.
 - Section 7.2's endpoint list is incomplete as written. The draft carries a stale marker pointing here.
 - ADR-019 applies to this route and, so far, only to this route.
+
+---
+
+## ADR-021: The events query wire contract
+Date: 2026-08-21
+Status: accepted
+
+### Context
+
+Section 7.2 gives `GET /contracts/:id/events` its query parameters and a general status code table: 200 for success, 400 for validation, 404 for missing, 429 for rate limit, 500 for internal, and never 200 with an error payload. It does not say what the route returns for a contract the indexer is not tracking, what an exhausted cursor looks like, or how an event's identifier is serialized.
+
+Each of those is a decision the SDK has to make now, and Phase D then has to match.
+
+### Decision
+
+**An untracked contract is a 404 with a `not_found` envelope, and the SDK throws.** It is not an empty page. "This contract is not being indexed" and "this contract has emitted nothing matching your filters" are different facts, and collapsing them means a caller who registered the wrong ID, or forgot to register at all, sees a plausible empty result instead of an error. The `events` method is not documented to return null, so ADR-019's absence path does not apply to it and the 404 surfaces as a `PulsarNetworkError` carrying the contract ID.
+
+**A tracked contract with no matching events is 200 with `{ items: [] }`.** The query succeeded and matched nothing.
+
+**Cursor exhaustion is `next_cursor` being null or absent.** Both mean the same thing, and the SDK normalizes them to null. An empty string is not a valid cursor and is rejected. A caller pages until `nextCursor === null`.
+
+**Event identifiers are strings on the wire.** The `events` table uses `BIGSERIAL`, whose range exceeds what a JSON number can carry without losing precision, so serializing an id as a number would silently corrupt it past 2^53. The SDK treats the id as opaque and never parses it.
+
+**Payload shape matches the contract list**: the envelope's `data` holds `{ items: [...] }`, with `next_cursor` alongside `data` in the envelope rather than inside it, per ADR-017.
+
+### Alternatives considered
+
+**Return an empty page for an untracked contract.** Rejected. It makes the most common integration mistake, querying a contract nobody registered, indistinguishable from a correct query with no results. That failure is silent and looks like data.
+
+**Signal exhaustion by an empty-string cursor.** Rejected. It makes the sentinel a valid-looking value that a caller might pass back, and it forces every consumer to remember which falsy value means done.
+
+**Serialize event ids as JSON numbers.** Rejected. It works until the table passes 2^53 rows and then corrupts ids with no error anywhere.
+
+### Consequences
+
+- Phase D returns 404 with `not_found` for an untracked contract on this route, and 200 with an empty `items` array for a tracked contract with no matches.
+- Phase D serializes `events.id` as a string. This is a correctness requirement, not a style preference.
+- The SDK's paging loop terminates on `nextCursor === null`, and the same rule applies to every paginated route added later.
+- A caller who wants to distinguish "not tracked" from "no events" catches `PulsarNetworkError` and reads its status, or calls `getContract` first, which returns null rather than throwing.
