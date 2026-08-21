@@ -34,6 +34,16 @@ That ID is the default in `.env.example` for both `NEXT_PUBLIC_SHOWCASE_CONTRACT
 
 **`indexer/`**, Go, its own module. Polls Soroban RPC on an interval, decodes the events it finds, and writes them to SQLite locally or Postgres in production. Serves the read API that the SDK and the explorer both consume. It treats every byte from a contract as hostile input and validates before insert. Separate module rather than a workspace member because the language boundary is a natural seam, recorded in ADR-002.
 
+### Why events paginate and contracts do not
+
+`GET /contracts/:id/events` takes `limit` and `cursor`. `GET /contracts` takes nothing and returns the whole list. That asymmetry is deliberate, and it follows from how the two sets grow.
+
+Tracked contracts are bounded by operator attention: each one exists because somebody deliberately registered it, so the list grows slowly, in human-sized steps, and has a natural ceiling. Events are bounded only by protocol activity: a busy contract emits them continuously, nobody decides one at a time, and there is no ceiling short of the ledger's own history.
+
+So the API shapes follow the growth patterns rather than being made uniform for tidiness. Paginating the contract list would add a cursor round trip to every caller for a list that fits in one response. Not paginating events would work in testing and fail in production against a contract with real traffic.
+
+The general rule for any endpoint added later: paginate what grows without anyone deciding to grow it.
+
 **`apps/web`**, Next.js 15 with the App Router. The public explorer. Server Components by default, TanStack Query for client-side paging against the indexer, Tailwind and shadcn/ui for everything visual.
 
 ## 5. Documentation
