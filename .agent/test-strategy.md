@@ -36,6 +36,18 @@ This came out of step 20. `PulsarConfigSchema` accepted `localhost:8080`, which 
 
 The general form: when writing a rejection test, ask what a hurried caller would actually type, not what a fuzzer would generate.
 
+## High coverage can hide a miscovered branch
+
+Coverage says a line ran. It does not say which test ran it, or that the test whose name claims that behavior is the one that did. A test can exercise a superset of the branch it names, pass for the wrong reason, and leave the branch it was written for untouched.
+
+Multi-step parses are where this happens most. When a response goes through several stages, transport, then JSON parse, then envelope, then payload, an arrangement meant to exercise a late stage can fail at an early one and still produce the error type the assertion expects.
+
+Read the line-by-line coverage output, not just the summary. An uncovered line inside a branch you believe you tested is the signal, and it usually shows up before a mutation check would.
+
+This came out of step 22. The non-2xx tests returned an empty body, so `response.json()` threw before the status check ran. They asserted `PulsarNetworkError` and passed, through the malformed-JSON branch, while the status branch they were named for stayed uncovered. The summary looked healthy; the per-line output named the missed line. The fix was to return a valid JSON body with the non-success status, and to keep the empty-body case as its own test rather than conflating the two.
+
+The general form: when arranging a test around a multi-step parse, check that every earlier stage succeeds, so the failure under test is the one the name claims.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
