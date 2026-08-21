@@ -15,6 +15,9 @@ import type { z } from 'zod';
 import { PulsarNetworkError, PulsarValidationError } from './errors.js';
 import { EnvelopeSchema, ErrorEnvelopeSchema, type ResolvedPulsarConfig } from './types.js';
 
+/** HTTP methods the indexer API uses. */
+export type HttpMethod = 'GET' | 'POST' | 'DELETE';
+
 /** What a single request needs to know beyond the client's configuration. */
 export interface RequestOptions<T extends z.ZodTypeAny> {
   /** Path relative to the indexer URL, such as `/health`. */
@@ -23,6 +26,10 @@ export interface RequestOptions<T extends z.ZodTypeAny> {
   readonly schema: T;
   /** The SDK operation making the request, used in error context. */
   readonly operation: string;
+  /** Defaults to GET. */
+  readonly method?: HttpMethod;
+  /** Serialized as JSON. Omit for a request with no body. */
+  readonly body?: unknown;
 }
 
 /** A validated response, with the timings that came with it. */
@@ -83,17 +90,24 @@ export async function request<T extends z.ZodTypeAny>(
   const fetchImpl = config.fetchImpl ?? globalThis.fetch;
   const startedAt = performance.now();
 
+  const method = options.method ?? 'GET';
+  const hasBody = options.body !== undefined;
+
   let response: Response;
   try {
     response = await fetchImpl(url, {
+      method,
       signal: AbortSignal.timeout(config.timeoutMs),
-      headers: { accept: 'application/json' },
+      headers: hasBody
+        ? { accept: 'application/json', 'content-type': 'application/json' }
+        : { accept: 'application/json' },
+      ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
     });
   } catch (cause) {
     const timedOut = cause instanceof DOMException && cause.name === 'TimeoutError';
     throw new PulsarNetworkError(
       timedOut ? `Request timed out after ${config.timeoutMs}ms` : 'Request failed',
-      { operation: options.operation, cause, url, status: null },
+      { operation: options.operation, cause, url, status: null, details: { method } },
     );
   }
 

@@ -11,8 +11,12 @@
 import { PulsarValidationError } from './errors.js';
 import { request } from './http.js';
 import {
+  ContractIdSchema,
+  ContractInfoPayloadSchema,
   HealthPayloadSchema,
   PulsarConfigSchema,
+  toContractInfo,
+  type ContractInfo,
   type PingResult,
   type PulsarConfig,
   type ResolvedPulsarConfig,
@@ -93,5 +97,45 @@ export class PulsarClient {
       latencyMs: result.latencyMs,
       serverTookMs: result.serverTookMs,
     };
+  }
+
+  /**
+   * Asks the indexer to start tracking a contract.
+   *
+   * Idempotent per ADR-018: registering a contract that is already tracked
+   * succeeds and returns the existing record, with its indexing progress
+   * untouched. A caller that loses the response to a network failure can
+   * simply call again.
+   *
+   * The contract ID is validated here before any request is sent, so an
+   * obvious mistake costs nothing and reports the problem where it was made.
+   *
+   * @param contractId - A Soroban contract ID: `C` followed by 55 base32
+   * characters.
+   * @throws {PulsarValidationError} if the contract ID is malformed, or if the
+   * indexer's response is not the shape this SDK version expects.
+   * @throws {PulsarNetworkError} if the indexer is unreachable, times out,
+   * returns a non-success status, answers with something that is not JSON, or
+   * returns the error envelope.
+   */
+  async registerContract(contractId: string): Promise<ContractInfo> {
+    const validated = ContractIdSchema.safeParse(contractId);
+
+    if (!validated.success) {
+      throw PulsarValidationError.fromZodError(validated.error, {
+        operation: 'client.registerContract',
+        details: { contractId },
+      });
+    }
+
+    const result = await request(this.#config, {
+      path: '/contracts',
+      method: 'POST',
+      body: { contract_id: validated.data },
+      schema: ContractInfoPayloadSchema,
+      operation: 'client.registerContract',
+    });
+
+    return toContractInfo(result.data);
   }
 }

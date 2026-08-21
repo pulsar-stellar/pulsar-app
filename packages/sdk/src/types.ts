@@ -135,6 +135,32 @@ export const ContractInfoSchema = z.object({
 /** A contract tracked by the indexer. */
 export type ContractInfo = z.infer<typeof ContractInfoSchema>;
 
+/**
+ * A tracked contract as it appears on the wire.
+ *
+ * snake_case per ADR-017, and the identifier is `id` rather than `contract_id`
+ * because that is the column name in the indexer's `contracts` table. The SDK
+ * maps this to {@link ContractInfo} at its boundary.
+ */
+export const ContractInfoPayloadSchema = z.object({
+  id: ContractIdSchema,
+  added_at: z.iso.datetime({ offset: true }),
+  first_indexed_ledger: z.number().int().nonnegative().nullable().optional(),
+  last_indexed_ledger: z.number().int().nonnegative(),
+  status: ContractStatusSchema,
+});
+
+/** Converts a wire payload into the camelCase shape callers see. */
+export function toContractInfo(payload: z.infer<typeof ContractInfoPayloadSchema>): ContractInfo {
+  return {
+    contractId: payload.id,
+    addedAt: payload.added_at,
+    firstIndexedLedger: payload.first_indexed_ledger ?? null,
+    lastIndexedLedger: payload.last_indexed_ledger,
+    status: payload.status,
+  };
+}
+
 /** The largest page the indexer will return. */
 export const EVENT_QUERY_MAX_LIMIT = 500;
 

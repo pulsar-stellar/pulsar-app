@@ -27,4 +27,19 @@ export const healthHandlers = [
   ),
 ];
 
-export const handlers = [...healthHandlers];
+/** A tracked contract as the indexer serves it, snake_case per ADR-017. */
+export const trackedContractPayload = {
+  id: 'CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L',
+  added_at: '2026-08-21T09:00:00Z',
+  first_indexed_ledger: 1_000_000,
+  last_indexed_ledger: 1_234_567,
+  status: 'active',
+} as const;
+
+export const contractHandlers = [
+  http.post(`${BASE}/contracts`, () =>
+    HttpResponse.json({ data: trackedContractPayload, meta: { took_ms: 7 } }),
+  ),
+];
+
+export const handlers = [...healthHandlers, ...contractHandlers];
