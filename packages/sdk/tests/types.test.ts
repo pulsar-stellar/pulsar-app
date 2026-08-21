@@ -185,6 +185,34 @@ describe('PulsarConfigSchema', () => {
     expect(PulsarConfigSchema.safeParse({ indexerUrl: '/api' }).success).toBe(false);
   });
 
+  it.each([
+    ['a missing scheme, which parses as protocol localhost:', 'localhost:8080'],
+    ['a bare hostname', 'localhost'],
+    ['a scheme the SDK cannot fetch', 'ftp://example.com'],
+    ['a javascript URL', 'javascript:alert(1)'],
+    ['an empty string', ''],
+  ])('rejects %s', (_label, indexerUrl) => {
+    expect(PulsarConfigSchema.safeParse({ indexerUrl }).success).toBe(false);
+  });
+
+  it.each([
+    ['http', 'http://localhost:8080'],
+    ['https with a path', 'https://api.example.com/v1'],
+    ['a trailing slash', 'http://localhost:8080/'],
+  ])('accepts %s', (_label, indexerUrl) => {
+    expect(PulsarConfigSchema.safeParse({ indexerUrl }).success).toBe(true);
+  });
+
+  it('applies the same constraint to rpcUrl', () => {
+    const bad = { indexerUrl: 'http://localhost:8080', rpcUrl: 'localhost:8000' };
+    expect(PulsarConfigSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it('trims surrounding whitespace rather than rejecting it', () => {
+    const parsed = PulsarConfigSchema.parse({ indexerUrl: '  http://localhost:8080  ' });
+    expect(parsed.indexerUrl).toBe('http://localhost:8080');
+  });
+
   it('rejects an unknown configuration key', () => {
     const bad = { indexerUrl: 'http://localhost:8080', retries: 3 };
     expect(PulsarConfigSchema.safeParse(bad).success).toBe(false);

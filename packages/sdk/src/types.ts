@@ -187,6 +187,17 @@ export const EventPageSchema = z.object({
 /** A page of decoded events. */
 export type EventPage = z.infer<typeof EventPageSchema>;
 
+/**
+ * The only schemes the SDK will send a request to.
+ *
+ * `z.url()` alone accepts anything the URL parser accepts, which is broader
+ * than it looks: `localhost:8080` parses as a URL whose protocol is
+ * `localhost:`, and `ftp://` and `javascript:` parse cleanly too. Dropping the
+ * scheme off an indexer URL is a common mistake, and without this constraint it
+ * would build a client that validates and then fails at its first request.
+ */
+const HTTP_PROTOCOL = /^https?$/;
+
 /** The default request timeout, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
@@ -201,8 +212,10 @@ export const DEFAULT_TIMEOUT_MS = 15_000;
  * further: its signature is checked by the type system, not at runtime.
  */
 export const PulsarConfigSchema = z.strictObject({
-  indexerUrl: z.url({ error: 'indexerUrl must be an absolute URL' }),
-  rpcUrl: z.url({ error: 'rpcUrl must be an absolute URL' }).optional(),
+  indexerUrl: z.url({ protocol: HTTP_PROTOCOL, error: 'indexerUrl must be an http or https URL' }),
+  rpcUrl: z
+    .url({ protocol: HTTP_PROTOCOL, error: 'rpcUrl must be an http or https URL' })
+    .optional(),
   network: PulsarNetworkSchema.optional(),
   fetchImpl: z.custom<typeof fetch>((value) => typeof value === 'function', {
     error: 'fetchImpl must be a function',
