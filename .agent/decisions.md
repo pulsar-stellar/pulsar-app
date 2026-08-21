@@ -518,3 +518,45 @@ Converting between the two views is an explicit helper landing with `contract.ts
 - The step 34 helper carries the mapping's tests, including the case difference and the topic-versus-data split, since those are exactly what a hand-rolled bridge gets wrong.
 - The bindings composition check belongs to step 34, because it cannot be written before the helper it checks exists. Its design, settled here so it is not relitigated: generate bindings at test time into `tmp/test-fixtures/<hash>/`, gitignored, where the hash covers contract ID, network, and SDK version, so different inputs get different directories and identical inputs reuse one. Generated code is a build artifact, and a committed fixture would go stale against the deployment it claims to describe. Runtime generation also exercises the same command a consumer runs. The assertions are type-level, through `vitest --typecheck`, because the binding's event exports are interfaces and are erased at runtime. The test skips rather than fails when RPC is unreachable, so an outage does not turn CI red over something we do not control.
 - If a future contract change makes the two views diverge further, that surfaces in the step 34 test as a type error rather than in a consumer's silently empty match.
+
+---
+
+## ADR-017: The indexer HTTP response envelope, fixed from the SDK side
+Date: 2026-08-21
+Status: accepted
+
+### Context
+
+The planning draft's section 7.2 lists `GET /health` as returning `{ ok, version, latest_ledger, tracked_contracts }`, and immediately after the endpoint list shows a response envelope of `{ data, next_cursor, meta: { took_ms } }`. It does not say whether the envelope wraps every endpoint or only the paginated ones, and the two readings produce different wire shapes for the same route.
+
+The SDK is written before the indexer, so whichever shape lands here becomes the contract the Go side is built against. Guessing silently would leave the disagreement to be discovered at Phase D integration, when both sides already have tests asserting incompatible shapes.
+
+### Decision
+
+The envelope wraps every JSON response from the indexer, including `/health`. Success is:
+
+```json
+{ "data": { "ok": true, "version": "0.1.0", "latest_ledger": 12345, "tracked_contracts": 3 },
+  "meta": { "took_ms": 12 } }
+```
+
+`next_cursor` appears only on paginated responses and is absent elsewhere rather than null. `meta` is optional from the SDK's perspective: the client validates it when present and does not require it.
+
+Field names on the wire stay snake_case, matching the draft and Go's conventions. The SDK maps them to camelCase at its boundary, so a TypeScript caller never sees snake_case and the Go side never has to emit camelCase.
+
+Errors use the error envelope the same section defines, and the SDK treats any response carrying `error` as a failure regardless of status code.
+
+### Alternatives considered
+
+**Bare objects on non-paginated endpoints.** Rejected. A client would need to know per-route which shape to expect, and every new endpoint becomes a fresh decision. Uniformity costs a few bytes on a health check and removes a category of integration bug.
+
+**camelCase on the wire.** Rejected. It would put the conversion on the Go side, where it fights the language's conventions, and the SDK has to validate and reshape the response anyway.
+
+**Leave it undecided until the indexer is built.** Rejected. That is the same decision made later, with two implementations already committed to opposite readings.
+
+### Consequences
+
+- Phase D builds the indexer to this contract. Section 7.2's ambiguity is resolved here and the draft carries a stale marker pointing at this entry.
+- The SDK's response parsing is uniform: unwrap `data`, check for `error`, map snake_case to camelCase, then validate against the shape for that route.
+- `meta.took_ms` is the indexer's own measurement and is not the same as the round-trip latency the SDK measures. Where both exist, they are reported separately rather than one standing in for the other.
+- If the indexer later needs a non-enveloped route, such as a plaintext readiness probe for a load balancer, that is a new ADR rather than a quiet exception.
