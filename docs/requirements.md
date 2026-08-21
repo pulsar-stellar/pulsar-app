@@ -464,7 +464,7 @@ Every test has: a specific behavior it verifies, an assertion that would fail if
 
 When Claude in chat, Claude Code in a repo, or any other coding agent generates future prompts, code, documentation, ADRs, or deliverables for this project, the following are non-negotiable:
 
-1. **Reference this document** at task start alongside the two system prompts and two roadmaps
+1. **Reference this document** at task start, alongside the repo's `CONTRIBUTING.md` and its `.agent/` files
 2. **Cite the six locally installed skills** applicable to the task: `humanizer`, `frontend-patterns`, `coding-standards`, `tdd-workflow`, `blueprint`, `security-review`
 3. **Apply the test discipline from Section 2** to every code change
 4. **Update the context folder from Section 3** at every phase transition or significant decision
@@ -480,7 +480,8 @@ Any deliverable that violates these is not accepted. The stricter rule always wi
 
 ## 7. Document changelog
 
-- **YYYY-MM-DD**: Initial requirements document drafted, before any code
+- **2026-08-12**: Initial requirements document drafted, before any code
+- **2026-08-21**: Promoted from the untracked planning directory into tracked `docs/`. Toolchain table updated to Node 22 and pnpm 11 per `pulsar-app` ADR-012, references to untracked drafts removed, and the planned `.agent/` files given trigger conditions.
 
 Update whenever a rule is added, tightened, or removed.
 
