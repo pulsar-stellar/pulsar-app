@@ -560,3 +560,36 @@ Errors use the error envelope the same section defines, and the SDK treats any r
 - The SDK's response parsing is uniform: unwrap `data`, check for `error`, map snake_case to camelCase, then validate against the shape for that route.
 - `meta.took_ms` is the indexer's own measurement and is not the same as the round-trip latency the SDK measures. Where both exist, they are reported separately rather than one standing in for the other.
 - If the indexer later needs a non-enveloped route, such as a plaintext readiness probe for a load balancer, that is a new ADR rather than a quiet exception.
+
+---
+
+## ADR-018: Contract registration is idempotent on identical input
+Date: 2026-08-21
+Status: accepted
+
+### Context
+
+Section 7.2 specifies `POST /contracts` with a body of `{ contract_id }` returning `ContractInfo`, and says nothing about what happens when the same contract is registered twice. The two readings are a conflict response, or a success returning the existing record.
+
+As with ADR-017, the SDK is written before the indexer, so whichever reading lands here becomes the contract Phase D is built against.
+
+One piece of evidence sits in the spec already. The error envelope's code enum is `not_found`, `validation`, `internal`, and `rate_limited`. There is no `conflict` code, so the 409 reading would require inventing one.
+
+### Decision
+
+Registering a contract that is already tracked succeeds and returns the existing `ContractInfo`, with the same status code as a first registration. The operation is idempotent on identical input.
+
+The response is the record as it stands, including its real `added_at`, `first_indexed_ledger`, and `last_indexed_ledger`. A repeat registration does not reset indexing progress, does not change `status`, and does not re-add the contract.
+
+### Alternatives considered
+
+**Return 409 with a `conflict` code.** Rejected. It makes the common retry path an error path. A client that registers a contract, loses the response to a network failure, and retries is doing the right thing, and it should not have to distinguish "already registered by my own lost request" from "already registered by somebody else" to carry on. It also requires adding an error code the spec does not define.
+
+**Return 200 for an existing contract and 201 for a new one.** Rejected as a middle ground that helps nobody here. The SDK returns `ContractInfo` either way and does not surface the status code, so the distinction would exist only for callers reading raw HTTP, and it would still leave a retry after a lost response reporting a different status than the call it is retrying.
+
+### Consequences
+
+- Phase D implements `POST /contracts` as an upsert that leaves existing rows untouched and returns them. Section 7.2's silence is resolved here and the draft carries a stale marker pointing at this entry.
+- A caller cannot learn from the response whether the contract was newly added. If that is ever needed it is a field on the response, decided in its own ADR, not a status code.
+- Registration is safe to retry, which means the SDK may retry it on transport failure without special handling. No retry logic exists yet; this records that it would be sound.
+- `DELETE /contracts/:id` returning 204 stays as specified. Deleting an untracked contract is a separate question this ADR does not answer.
