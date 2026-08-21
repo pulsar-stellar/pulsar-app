@@ -593,3 +593,71 @@ The response is the record as it stands, including its real `added_at`, `first_i
 - A caller cannot learn from the response whether the contract was newly added. If that is ever needed it is a field on the response, decided in its own ADR, not a status code.
 - Registration is safe to retry, which means the SDK may retry it on transport failure without special handling. No retry logic exists yet; this records that it would be sound.
 - `DELETE /contracts/:id` returning 204 stays as specified. Deleting an untracked contract is a separate question this ADR does not answer.
+
+---
+
+## ADR-019: Absence requires both a 404 status and a not_found envelope
+Date: 2026-08-21
+Status: accepted
+
+### Context
+
+`getContract` returns `ContractInfo | null`, where null means the indexer is not tracking that contract. Section 6.7 is explicit that absence is null and never undefined, but it does not say what on the wire constitutes absence.
+
+Three signals could carry it: the HTTP status, the error envelope's `not_found` code, or both. They can also disagree, and a client has to decide what to do when they do.
+
+### Decision
+
+`null` is returned only when the response carries **both** HTTP 404 **and** an error envelope whose `code` is `not_found`.
+
+Every other shape is an error:
+
+| Response | Result |
+|---|---|
+| 404 with `not_found` envelope | `null` |
+| 404 with no envelope, or an envelope with a different code | `PulsarNetworkError` |
+| 2xx carrying any error envelope | `PulsarValidationError` |
+| any other non-success status | `PulsarNetworkError` |
+
+The 2xx-with-error-envelope case is deliberately a validation error rather than a network one. The transport worked and the server contradicted itself, which is a response-shape problem, not a connectivity problem.
+
+This rule applies only where a method is documented to return null. On every other route a 404 is an error regardless of what envelope accompanies it.
+
+### Alternatives considered
+
+**Status alone.** Rejected. It couples the SDK's notion of absence to HTTP, so any proxy, CDN, or misrouted request that produces a 404 becomes indistinguishable from the indexer saying the contract is untracked. A caller would read a routing bug as a legitimate absence.
+
+**Envelope alone, with a 200 status.** Rejected. It breaks HTTP semantics for everything between the SDK and the indexer: proxies, monitoring, and load balancers all read status codes, and reporting absence as success makes a 404 rate invisible in operational dashboards.
+
+### Consequences
+
+- `null` means the resource does not exist according to a structured signal the indexer deliberately sent. A caller can branch on it without a second check.
+- A bare 404 surfaces as an error with the status, URL, and operation attached, which is what is needed to diagnose a routing or proxy problem.
+- Contradictory signals surface as validation errors, keeping "the server is confused" distinct from "the server is unreachable".
+- Phase D must send both signals together on absence. A handler returning a bare 404 is a bug against this ADR.
+
+---
+
+## ADR-020: Add GET /contracts/:id
+Date: 2026-08-21
+Status: accepted
+
+### Context
+
+Section 6.2 declares `getContract(contractId): Promise<ContractInfo | null>`, but section 7.2's endpoint list has no route for a single contract. It carries `GET /contracts`, `POST /contracts`, `DELETE /contracts/:id`, and `GET /contracts/:id/events`. The single-item GET is a gap rather than a deliberate omission: the DELETE on that exact path already exists.
+
+### Decision
+
+Add `GET /contracts/:id` to the indexer's HTTP surface. It returns the contract's record on 200 in the standard envelope, and on absence returns 404 together with a `not_found` error envelope, per ADR-019.
+
+The SDK's `getContract` routes to this endpoint.
+
+### Alternatives considered
+
+**Derive `getContract` from `listContracts`.** Rejected. It transfers the whole tracked-contract list on every single-contract lookup, and it degrades as the list grows, which means it works in development and gets slower in production without any code changing. It also destroys the structured absence signal: a filter returning nothing cannot distinguish an untracked contract from a request that failed to reach the right indexer.
+
+### Consequences
+
+- Phase D implements this handler symmetrically with the existing `DELETE /contracts/:id`.
+- Section 7.2's endpoint list is incomplete as written. The draft carries a stale marker pointing here.
+- ADR-019 applies to this route and, so far, only to this route.
