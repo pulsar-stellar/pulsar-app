@@ -36,6 +36,20 @@ do {
 
 Bounded execution applies to loops inside a test, not only to the suite as a whole. Pick a cap far above any legitimate run, 100 pages rather than 5 where the real ceiling is unknown, so the bound catches non-termination without ever firing on correct behavior.
 
+Count the right thing. A cap on items collected does not bound a loop that refetches an empty page forever, because such a loop yields nothing and the counter never moves. Bound the requests instead, in the mock handler, where every attempt is visible whether or not it produced anything:
+
+```ts
+http.get(route, () => {
+  requests += 1;
+  if (requests > MAX_REQUESTS) {
+    throw new Error(`paging did not terminate: over ${MAX_REQUESTS} requests`);
+  }
+  // ...
+});
+```
+
+Step 29 hit exactly this: an item-based cap caught the mutation that stopped following the cursor, and hung on the one that removed the end-of-pages check, because that version looped on an empty page.
+
 This came out of step 28. Mutating the events method to drop the cursor from its outgoing query hung the runner, because the test kept fetching page one and reading the same cursor back. With the bound, the same mutation fails in under a second and names the reason.
 
 ## Trust but verify a background command

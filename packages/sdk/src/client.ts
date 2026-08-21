@@ -21,6 +21,7 @@ import {
   toContractInfo,
   toDecodedEvent,
   type ContractInfo,
+  type DecodedEvent,
   type EventQuery,
   type EventsPage,
   type PingResult,
@@ -264,5 +265,59 @@ export class PulsarClient {
       items: result.data.items.map(toDecodedEvent),
       nextCursor: result.nextCursor,
     };
+  }
+
+  /**
+   * Iterates one contract's event history, fetching pages as they are needed.
+   *
+   * ```ts
+   * for await (const event of client.eventStream(contractId, { name: 'deposit' })) {
+   *   console.log(event.ledger, event.name);
+   * }
+   * ```
+   *
+   * Pages are fetched one at a time, only when the previous page is exhausted.
+   * Nothing is prefetched, so leaving the loop early stops the traversal
+   * without a request for a page nobody will read.
+   *
+   * Each iteration starts a fresh traversal. Iterating the same value twice,
+   * including concurrently, replays from the beginning rather than sharing a
+   * position, because a half-consumed stream that silently resumes elsewhere
+   * is worse than an obvious repeat.
+   *
+   * `query.cursor` sets the starting point, so a caller can resume from a
+   * cursor they stored earlier.
+   *
+   * @throws {PulsarValidationError} or {@link PulsarNetworkError} out of the
+   * `for await` loop, on whichever page fails. A failure part way through
+   * leaves the events already yielded valid; only the rest is lost.
+   */
+  eventStream(contractId: string, query?: EventQuery): AsyncIterable<DecodedEvent> {
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<DecodedEvent> =>
+        this.#streamEvents(contractId, query),
+    };
+  }
+
+  /** Walks pages until the cursor runs out, yielding each event in turn. */
+  async *#streamEvents(contractId: string, query?: EventQuery): AsyncGenerator<DecodedEvent> {
+    let cursor = query?.cursor;
+
+    for (;;) {
+      const page = await this.events(
+        contractId,
+        cursor === undefined ? query : { ...query, cursor },
+      );
+
+      for (const event of page.items) {
+        yield event;
+      }
+
+      if (page.nextCursor === null) {
+        return;
+      }
+
+      cursor = page.nextCursor;
+    }
   }
 }
