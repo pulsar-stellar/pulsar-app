@@ -34,6 +34,8 @@ do {
 } while (cursor !== undefined);
 ```
 
+Bounded execution applies to loops inside a test, not only to the suite as a whole. Pick a cap far above any legitimate run, 100 pages rather than 5 where the real ceiling is unknown, so the bound catches non-termination without ever firing on correct behavior.
+
 This came out of step 28. Mutating the events method to drop the cursor from its outgoing query hung the runner, because the test kept fetching page one and reading the same cursor back. With the bound, the same mutation fails in under a second and names the reason.
 
 ## Trust but verify a background command
@@ -65,6 +67,18 @@ Read the line-by-line coverage output, not just the summary. An uncovered line i
 This came out of step 22. The non-2xx tests returned an empty body, so `response.json()` threw before the status check ran. They asserted `PulsarNetworkError` and passed, through the malformed-JSON branch, while the status branch they were named for stayed uncovered. The summary looked healthy; the per-line output named the missed line. The fix was to return a valid JSON body with the non-success status, and to keep the empty-body case as its own test rather than conflating the two.
 
 The general form: when arranging a test around a multi-step parse, check that every earlier stage succeeds, so the failure under test is the one the name claims.
+
+## Identifiers that can outgrow a JSON number must be strings
+
+A JSON number cannot carry an integer above `Number.MAX_SAFE_INTEGER`, which is 2^53 minus one. Past that, `JSON.parse` rounds silently. There is no error, no warning, and no way to recover the original value: by the time a schema sees the field, the damage is done, so validating the parsed number cannot help.
+
+Anything whose growth is unbounded belongs in a string on the wire and in the schema: database primary keys declared `BIGSERIAL` or `BIGINT`, transaction sequence numbers, ledger heights, and any counter that only ever goes up.
+
+Reject numbers at schema time rather than accepting them and checking the range. A schema that takes `z.union([z.string(), z.number()])` passes every test written with small fixtures and corrupts real identifiers years later, once the table has grown, with nothing in the logs to say so. Test that a number is rejected outright, using a small one, precisely because a small one is what a permissive schema would let through.
+
+This came out of step 28 and is recorded as ADR-021. The indexer's `events` table uses `BIGSERIAL`, so event ids are strings on the wire and the schema rejects numbers of any size. The paired test asserts that round-tripping the id through `Number` changes it, which is the failure being prevented, stated as an assertion.
+
+A related trap when writing the test itself: a numeric literal in TypeScript source is subject to the same rounding, so comparing a parsed value against a literal above 2^53 compares two already-rounded numbers and proves nothing. Assert on the string form instead.
 
 ## Where the two kinds of test live
 
