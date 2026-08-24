@@ -94,7 +94,15 @@ export const DecodedEventSchema = z.object({
   contractId: ContractIdSchema,
   ledger: z.number().int().nonnegative(),
   txHash: z.string().min(1),
-  /** Position of the event within its transaction. */
+  /**
+   * The event's ordinal position within its ledger, per ADR-022.
+   *
+   * Ledger-wide rather than per-transaction, because Soroban RPC has no
+   * per-transaction index to offer: its `transactionIndex` and
+   * `operationIndex` repeat across events, and only the event id's second
+   * component increments. Events from one transaction stay contiguous, so
+   * ordering within a transaction still works.
+   */
   eventIndex: z.number().int().nonnegative(),
   /** The event's name, decoded from its first topic. */
   name: z.string().min(1),

@@ -700,3 +700,36 @@ Each of those is a decision the SDK has to make now, and Phase D then has to mat
 - Phase D serializes `events.id` as a string. This is a correctness requirement, not a style preference.
 - The SDK's paging loop terminates on `nextCursor === null`, and the same rule applies to every paginated route added later.
 - A caller who wants to distinguish "not tracked" from "no events" catches `PulsarNetworkError` and reads its status, or calls `getContract` first, which returns null rather than throwing.
+
+---
+
+## ADR-022: eventIndex is an ordinal within the ledger, not within the transaction
+Date: 2026-08-24
+Status: accepted
+
+### Context
+
+Section 6.4 documents `DecodedEvent.eventIndex` as the event's "position within tx", and section 7.1 enforces that reading with `UNIQUE (tx_hash, event_index)` on the events table. The direct-RPC path in step 32 has to populate the same field, so the two sources have to agree on what it means.
+
+Soroban RPC cannot produce a per-transaction index. A live `getEvents` call against testnet returned three consecutive events with three different `txHash` values but `transactionIndex: 0` and `operationIndex: 0` on all three. Only the second component of the event's `id` incremented, `0000000000` through `0000000002`, and it did so across transactions within one ledger. The RPC event id has the form `{toid}-{eventOrder}`, and that ordinal is ledger-wide.
+
+Two further facts from the same call. The event `id` doubles as the paging cursor, and the SDK's own type declaration documents it as "the JSON-RPC request ID", which is wrong; it is the event's identifier.
+
+### Decision
+
+`eventIndex` is the event's ordinal position within its ledger, on both paths.
+
+The RPC path takes it from the second component of the event id. The indexer adopts the same definition, and section 7.1's constraint becomes `UNIQUE (ledger, event_index)`.
+
+### Alternatives considered
+
+**Keep "position within tx" and derive it on the RPC path** by counting events sharing a `txHash` within the fetched page. Rejected. It is wrong whenever a transaction's events straddle a page boundary, and wrong silently: a consumer storing events keyed on `(txHash, eventIndex)` then gets duplicate keys, which either trips a uniqueness constraint or overwrites a real event with another.
+
+**Drop `eventIndex` from `DecodedEvent`** and identify an event by its opaque id alone. Rejected. It forces any consumer wanting ordering to parse the id, which leaks the id's internal structure into consumer code and makes the format hard to change later.
+
+### Consequences
+
+- Ordering by `(ledger, eventIndex)` gives correct global order on both paths.
+- Ordering within a single transaction still works, because a transaction's events stay contiguous in the ledger-wide ordinal.
+- Section 7.1's schema changes before it is written. This is cheap now and would be expensive after Phase D ships, which is the reason to settle it here rather than at integration.
+- The RPC path's synthetic id and this ordinal come from the same field, so a malformed RPC id fails both at once rather than producing an event with a plausible-looking wrong index.
