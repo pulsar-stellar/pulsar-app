@@ -7,6 +7,8 @@
 
 export { PulsarClient } from './client.js';
 
+export { decodeScVal, decodeTopics, eventNameFromTopics } from './decode.js';
+
 export {
   findPulsarError,
   PulsarError,

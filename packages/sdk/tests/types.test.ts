@@ -74,7 +74,21 @@ describe('DecodedValueSchema', () => {
   });
 
   it('rejects a variant it does not know', () => {
-    expect(DecodedValueSchema.safeParse({ type: 'u256', value: '1' }).success).toBe(false);
+    expect(DecodedValueSchema.safeParse({ type: 'quaternion', value: '1' }).success).toBe(false);
+  });
+
+  it('accepts the wide integer variants added in ADR-023', () => {
+    expect(DecodedValueSchema.safeParse({ type: 'u256', value: '1' }).success).toBe(true);
+    expect(DecodedValueSchema.safeParse({ type: 'timepoint', value: '1' }).success).toBe(true);
+  });
+
+  it('accepts the unknown fallback, which carries XDR rather than a value', () => {
+    expect(DecodedValueSchema.safeParse({ type: 'unknown', xdr: 'AAAA' }).success).toBe(true);
+    expect(DecodedValueSchema.safeParse({ type: 'unknown', value: 'x' }).success).toBe(false);
+  });
+
+  it('rejects a u32 carrying a value too wide to be one', () => {
+    expect(DecodedValueSchema.safeParse({ type: 'u32', value: '7' }).success).toBe(false);
   });
 
   it('rejects a bool carrying a string', () => {

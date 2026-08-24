@@ -733,3 +733,46 @@ The RPC path takes it from the second component of the event id. The indexer ado
 - Ordering within a single transaction still works, because a transaction's events stay contiguous in the ledger-wide ordinal.
 - Section 7.1's schema changes before it is written. This is cheap now and would be expensive after Phase D ships, which is the reason to settle it here rather than at integration.
 - The RPC path's synthetic id and this ordinal come from the same field, so a malformed RPC id fails both at once rather than producing an event with a plausible-looking wrong index.
+
+---
+
+## ADR-023: The DecodedValue taxonomy, extended to what Soroban actually emits
+Date: 2026-08-24
+Status: accepted
+
+### Context
+
+Section 6.4's `DecodedValue` union covers `address`, `symbol`, `i128`, `u128`, `bytes`, `string`, `bool`, `vec`, `map`, `tuple`, and `void`. Soroban's `ScVal` also carries `u32`, `i32`, `u64`, `i64`, `timepoint`, `duration`, `u256`, `i256`, `error`, and `contractInstance`. A `u32` is among the most common things a contract emits, for counters, indices, and version tags, and the union has nowhere to put one.
+
+The gap would not have surfaced in testing. The showcase contract emits only `Address`, `i128`, `Symbol`, and `Bytes`, all of which the original union covers, so every fixture calibrated against it passes. `pulsar-core` defines no value taxonomy of its own, so there was no cross-repo answer to adopt.
+
+`tuple` has the opposite problem: it is unreachable from XDR, because Soroban encodes a tuple as a vector. Only a decoder holding the contract's spec can tell them apart.
+
+### Decision
+
+Extend the union with the variants Soroban commonly emits, and add a fallback that cannot fail.
+
+| Variant | Carried as | Why |
+|---|---|---|
+| `u32`, `i32` | `number` | 32 bits always fit |
+| `u64`, `i64`, `u128`, `i128`, `u256`, `i256` | `string` | wider than 2^53, so a JSON number rounds silently, per ADR-021 |
+| `timepoint`, `duration` | `string` | unsigned 64-bit second counts, same reasoning |
+| `unknown` | `{ xdr: string }` | anything this SDK version cannot name, base64 intact |
+
+`error` and `contractInstance` are deliberately left to the fallback for v0.1: both are unusual in event payloads, and an opaque value with its XDR is more useful than a half-modelled one.
+
+`tuple` stays in the union for the indexer, which can consult the contract spec. The RPC path emits `vec`.
+
+### Alternatives considered
+
+**Fallback only, leaving the union as section 6.4 has it.** Rejected. It abandons the decoder's whole purpose for something as ordinary as a `u32`, handing consumers base64 to decode themselves.
+
+**Extend the union and throw on anything unrecognized.** Rejected. A future protocol version adding an `ScVal` variant would then break an SDK that had been working, and it would break it at read time on events already indexed. Degrading keeps old clients reading new data.
+
+### Consequences
+
+- New `ScVal` variants arrive as `unknown` rather than as an exception, so a protocol upgrade does not require an SDK upgrade to keep reading.
+- The indexer stores the extended set. Its JSON columns need no schema change, since the taxonomy lives in the value rather than the column type.
+- This union is the wire contract for `pulsar-decoder` v0.2. The Rust decoder must produce these variants, including the fallback, and any future extension is a coordinated change across both repos.
+- The decoder never throws. A value that fails mid-decode degrades to `unknown` with its XDR, so one corrupt value cannot discard the rest of a page.
+- Verified against live testnet output: eight real contract events decoded to `symbol`, `address`, and `i128` with zero unknowns, and the `address` variant correctly carries `G`-prefixed account addresses as well as contract ids.

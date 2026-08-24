@@ -40,23 +40,45 @@ export const ContractIdSchema = z
 /**
  * A single decoded contract value.
  *
- * Mirrors the `ScVal` variants the decoder produces. Integers wider than 53
- * bits are carried as strings so that no precision is lost passing through
- * JSON, and `bytes` is hex rather than base64 so a value is readable next to
- * the raw XDR it came from.
+ * Mirrors the `ScVal` variants the decoder produces, per ADR-023.
+ *
+ * Integers wider than 32 bits are carried as strings so that no precision is
+ * lost passing through JSON, the same reasoning ADR-021 applies to event ids.
+ * `u32` and `i32` stay numbers because they always fit. `bytes` is hex rather
+ * than base64 so a value is readable next to the raw XDR it came from.
+ *
+ * `timepoint` and `duration` are unsigned 64-bit second counts, so they are
+ * strings for the same reason.
+ *
+ * `tuple` is not reachable from XDR alone, since Soroban encodes a tuple as a
+ * vector. Only a decoder holding the contract's spec can tell the two apart,
+ * so the RPC path emits `vec` and the variant exists for the indexer.
+ *
+ * `unknown` carries the base64 XDR of anything this SDK version cannot name,
+ * so a protocol addition degrades to an opaque value instead of failing the
+ * whole page.
  */
 export type DecodedValue =
   | { type: 'address'; value: string }
   | { type: 'symbol'; value: string }
-  | { type: 'i128'; value: string }
-  | { type: 'u128'; value: string }
-  | { type: 'bytes'; value: string }
   | { type: 'string'; value: string }
   | { type: 'bool'; value: boolean }
+  | { type: 'bytes'; value: string }
+  | { type: 'u32'; value: number }
+  | { type: 'i32'; value: number }
+  | { type: 'u64'; value: string }
+  | { type: 'i64'; value: string }
+  | { type: 'u128'; value: string }
+  | { type: 'i128'; value: string }
+  | { type: 'u256'; value: string }
+  | { type: 'i256'; value: string }
+  | { type: 'timepoint'; value: string }
+  | { type: 'duration'; value: string }
   | { type: 'vec'; value: DecodedValue[] }
   | { type: 'map'; value: Record<string, DecodedValue> }
   | { type: 'tuple'; value: DecodedValue[] }
-  | { type: 'void' };
+  | { type: 'void' }
+  | { type: 'unknown'; xdr: string };
 
 /**
  * Validates a {@link DecodedValue}.
@@ -69,15 +91,24 @@ export const DecodedValueSchema: z.ZodType<DecodedValue> = z.lazy(() =>
   z.discriminatedUnion('type', [
     z.object({ type: z.literal('address'), value: z.string() }),
     z.object({ type: z.literal('symbol'), value: z.string() }),
-    z.object({ type: z.literal('i128'), value: z.string() }),
-    z.object({ type: z.literal('u128'), value: z.string() }),
-    z.object({ type: z.literal('bytes'), value: z.string() }),
     z.object({ type: z.literal('string'), value: z.string() }),
     z.object({ type: z.literal('bool'), value: z.boolean() }),
+    z.object({ type: z.literal('bytes'), value: z.string() }),
+    z.object({ type: z.literal('u32'), value: z.number().int().nonnegative() }),
+    z.object({ type: z.literal('i32'), value: z.number().int() }),
+    z.object({ type: z.literal('u64'), value: z.string() }),
+    z.object({ type: z.literal('i64'), value: z.string() }),
+    z.object({ type: z.literal('u128'), value: z.string() }),
+    z.object({ type: z.literal('i128'), value: z.string() }),
+    z.object({ type: z.literal('u256'), value: z.string() }),
+    z.object({ type: z.literal('i256'), value: z.string() }),
+    z.object({ type: z.literal('timepoint'), value: z.string() }),
+    z.object({ type: z.literal('duration'), value: z.string() }),
     z.object({ type: z.literal('vec'), value: z.array(DecodedValueSchema) }),
     z.object({ type: z.literal('map'), value: z.record(z.string(), DecodedValueSchema) }),
     z.object({ type: z.literal('tuple'), value: z.array(DecodedValueSchema) }),
     z.object({ type: z.literal('void') }),
+    z.object({ type: z.literal('unknown'), xdr: z.string().min(1) }),
   ]),
 );
 
