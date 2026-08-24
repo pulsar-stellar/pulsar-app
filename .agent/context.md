@@ -60,6 +60,14 @@ The toolchain is Node 22 LTS with pnpm 11, which supersedes the draft's Node 20 
 
 Next is Phase B, steps 16 through 19, the SDK skeleton. Its entry gate is discharged: the `@stellar/stellar-sdk` claims are verified against the installed package and current RPC documentation, and the findings are in ADR-013. Write against that entry, not against the draft's section 6. In short: pin `16.2.0` exactly, declare the peer range `>=16.2.0 <17.0.0`, remember that `getEvents` takes either a ledger range or a cursor and never both, read `oldestLedger` from responses rather than hardcoding a seven-day retention window, and note that the event field is `topic`, singular.
 
+### Decided, pending implementation at step 32
+
+Both settled before the work starts, to be recorded as ADRs when the code lands.
+
+**Synthetic ids on the RPC path.** RPC-fetched events get `id: "rpc:{txHash}:{eventIndex}"`; indexer-fetched events keep the digit-only id from ADR-021. One `DecodedEvent` type covers both, and the prefix stops a consumer comparing ids across sources by accident. Rejected: a nullable `id`, which weakens the type for the indexer majority, and a separate `LiveEvent` type, which splits the abstraction and pushes bridging onto consumers. An `rpc:` id passed to `event()` is correctly rejected by `EventIdSchema`, since an RPC-path event is not retrievable from the indexer by id.
+
+**Live queries use a discriminated union.** `fetchLiveEvents` takes either `{ startLedger, limit?, filter? }` or `{ cursor, limit?, filter? }`, with `never` on the opposite field, mirroring the mutual exclusivity ADR-013 verified in `getEvents`. It returns `{ events, cursor, latestLedger }`. `liveEventStream(query, { pollIntervalMs? })` wraps it for SDK-driven polling; both land together. Rejected: runtime validation alone, which relies on remembering, and split initial/next-page methods, which trade ergonomics for nothing the type system cannot give. Type-level tests are required: passing both fields must fail to compile, and passing neither must fail to compile.
+
 ## 7. Drips Wave context
 
 The toolkit is aimed at a Drips Wave submission. That shapes two things. Repo hygiene is a deliverable, not an afterthought: branch protection, CONTRIBUTING, SECURITY, and a README that matches the pattern of approved Stellar repos all get a dedicated sprint before submission. And contributor-facing surface matters, because outside contributors are expected to work mostly in this repo rather than in `pulsar-core`, which stays reviewer-only until v1.0. Write issues and code with a stranger in mind.
