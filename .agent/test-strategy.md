@@ -104,6 +104,18 @@ When polling any external system, wait once for a realistic duration and then ch
 
 This came out of step 29, after roughly a dozen commits each followed by an `until gh run list ...; do sleep 8; done` loop.
 
+## Verify shapes against live protocol output before committing to them
+
+A spec draft describes what someone intended a protocol to return. Live output shows what it does return, and the two diverge in ways no amount of reading closes. Type declarations are better evidence than prose and still not conclusive: they can be right about the fields and wrong about what the fields mean.
+
+Before making a structural decision about data an external protocol produces, call the protocol and look. One request usually settles what a day of reading cannot.
+
+Two findings from step 32 make the case. The planned event id format composed `txHash` with an event index, and a single `getEvents` call against testnet showed three consecutive events with three different `txHash` values but identical `transactionIndex` and `operationIndex`, so neither index identified an event and the format was not constructible. The same response showed the event `id` is the real per-event identifier and doubles as the paging cursor, while the SDK's own type declaration describes it as "the JSON-RPC request ID", which is wrong.
+
+`pulsar-core`'s showcase contract, deployed to testnet at `v0.1.0-contracts`, exists partly for this. It is a known emitter whose event shapes are fixed, so a live call against it answers questions about real decoded output rather than about a fixture somebody wrote to match their own expectations.
+
+The cost of skipping this is asymmetric. Checking costs one request. Not checking means the wrong shape reaches a schema, a database constraint, and a consumer's storage key before anything disagrees with it.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
