@@ -64,9 +64,12 @@ describe('DecodedValueSchema', () => {
       value: [
         {
           type: 'map',
-          value: {
-            amounts: { type: 'tuple', value: [{ type: 'i128', value: '1' }] },
-          },
+          value: [
+            {
+              key: { type: 'symbol', value: 'amounts' },
+              value: { type: 'tuple', value: [{ type: 'i128', value: '1' }] },
+            },
+          ],
         },
       ],
     };

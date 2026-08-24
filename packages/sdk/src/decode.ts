@@ -5,11 +5,14 @@
  * serves the same shape, so a consumer sees one representation whichever
  * source an event came from.
  *
- * Two rules govern the mapping, both from ADR-023. Anything wider than 32 bits
+ * Three rules govern the mapping, all from ADR-023. Anything wider than 32 bits
  * becomes a string, because a JSON number rounds silently past 2^53. Anything
  * this SDK version cannot name becomes `{ type: 'unknown', xdr }` carrying the
  * base64, so a protocol addition degrades to an opaque value rather than
- * failing the page it arrived in.
+ * failing the page it arrived in. And a map becomes an ordered array of
+ * key/value pairs, because Soroban map keys are themselves `ScVal`s: folding
+ * them into an object would erase the key's type, collapse duplicates, and
+ * lose the wire ordering.
  */
 
 import { scValToNative, type xdr } from '@stellar/stellar-sdk';
@@ -86,12 +89,10 @@ export function decodeScVal(value: xdr.ScVal): DecodedValue {
       case 'scvMap':
         return {
           type: 'map',
-          value: Object.fromEntries(
-            (value.map() ?? []).map((entry) => [
-              String(scValToNative(entry.key())),
-              decodeScVal(entry.val()),
-            ]),
-          ),
+          value: (value.map() ?? []).map((entry) => ({
+            key: decodeScVal(entry.key()),
+            value: decodeScVal(entry.val()),
+          })),
         };
 
       default:

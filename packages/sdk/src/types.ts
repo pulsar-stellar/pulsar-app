@@ -38,6 +38,20 @@ export const ContractIdSchema = z
   .regex(/^C[A-Z2-7]{55}$/, { error: 'Contract ID must be 56 characters starting with C' });
 
 /**
+ * One entry of a decoded Soroban map.
+ *
+ * A map is carried as an ordered array of these rather than as an object or a
+ * JavaScript `Map`, per ADR-023. Soroban map keys are `ScVal`s, so a key can be
+ * a Symbol, an Address, or an integer, and two keys of different types can
+ * render to the same string. The array keeps the key's type, the wire ordering,
+ * and any duplicate entries, and it survives `JSON.stringify` unchanged.
+ */
+export interface DecodedMapEntry {
+  readonly key: DecodedValue;
+  readonly value: DecodedValue;
+}
+
+/**
  * A single decoded contract value.
  *
  * Mirrors the `ScVal` variants the decoder produces, per ADR-023.
@@ -75,10 +89,15 @@ export type DecodedValue =
   | { type: 'timepoint'; value: string }
   | { type: 'duration'; value: string }
   | { type: 'vec'; value: DecodedValue[] }
-  | { type: 'map'; value: Record<string, DecodedValue> }
+  | { type: 'map'; value: DecodedMapEntry[] }
   | { type: 'tuple'; value: DecodedValue[] }
   | { type: 'void' }
   | { type: 'unknown'; xdr: string };
+
+/** Validates one {@link DecodedMapEntry}. */
+export const DecodedMapEntrySchema: z.ZodType<DecodedMapEntry> = z.lazy(() =>
+  z.object({ key: DecodedValueSchema, value: DecodedValueSchema }),
+);
 
 /**
  * Validates a {@link DecodedValue}.
@@ -105,7 +124,7 @@ export const DecodedValueSchema: z.ZodType<DecodedValue> = z.lazy(() =>
     z.object({ type: z.literal('timepoint'), value: z.string() }),
     z.object({ type: z.literal('duration'), value: z.string() }),
     z.object({ type: z.literal('vec'), value: z.array(DecodedValueSchema) }),
-    z.object({ type: z.literal('map'), value: z.record(z.string(), DecodedValueSchema) }),
+    z.object({ type: z.literal('map'), value: z.array(DecodedMapEntrySchema) }),
     z.object({ type: z.literal('tuple'), value: z.array(DecodedValueSchema) }),
     z.object({ type: z.literal('void') }),
     z.object({ type: z.literal('unknown'), xdr: z.string().min(1) }),

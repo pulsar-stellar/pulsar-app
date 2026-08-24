@@ -56,7 +56,12 @@ describe('DecodedValue variants', () => {
   it('recurses through vec, map, and tuple', () => {
     assertType<DecodedValue>({
       type: 'map',
-      value: { inner: { type: 'vec', value: [{ type: 'tuple', value: [{ type: 'void' }] }] } },
+      value: [
+        {
+          key: { type: 'symbol', value: 'inner' },
+          value: { type: 'vec', value: [{ type: 'tuple', value: [{ type: 'void' }] }] },
+        },
+      ],
     });
   });
 

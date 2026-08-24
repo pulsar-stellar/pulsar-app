@@ -748,6 +748,8 @@ The gap would not have surfaced in testing. The showcase contract emits only `Ad
 
 `tuple` has the opposite problem: it is unreachable from XDR, because Soroban encodes a tuple as a vector. Only a decoder holding the contract's spec can tell them apart.
 
+The `map` variant carries a second question. Soroban map keys are themselves `ScVal`s, so a key can be a Symbol, an Address, or an integer, and section 6.4's `Record<string, DecodedValue>` has nowhere to put that. `contractInstance` carries a third: its shape can be inferred from `@stellar/stellar-sdk`, but this project has never observed one in an event.
+
 ### Decision
 
 Extend the union with the variants Soroban commonly emits, and add a fallback that cannot fail.
@@ -761,6 +763,8 @@ Extend the union with the variants Soroban commonly emits, and add a fallback th
 
 `error` and `contractInstance` are deliberately left to the fallback for v0.1: both are unusual in event payloads, and an opaque value with its XDR is more useful than a half-modelled one.
 
+The `map` variant is an ordered `Array<{ key: DecodedValue; value: DecodedValue }>`. That preserves wire ordering, supports non-string keys, keeps duplicate keys, and serializes through `JSON.stringify` unchanged. Consumers who need frequent lookup build their own indexed structure from the array, explicitly and with their own key policy.
+
 `tuple` stays in the union for the indexer, which can consult the contract spec. The RPC path emits `vec`.
 
 ### Alternatives considered
@@ -769,10 +773,17 @@ Extend the union with the variants Soroban commonly emits, and add a fallback th
 
 **Extend the union and throw on anything unrecognized.** Rejected. A future protocol version adding an `ScVal` variant would then break an SDK that had been working, and it would break it at read time on events already indexed. Degrading keeps old clients reading new data.
 
+**A JavaScript `Map` for the `map` variant.** Rejected. `JSON.stringify` renders one as `{}`, so any consumer serializing an event loses its payload. Lookup is by reference equality, so a consumer calling `has()` with a freshly built `DecodedValue` key never hits. And its insertion ordering is a runtime property rather than something the type states.
+
+**An object with stringified keys, as section 6.4 has it.** Rejected. It erases the key's type, so a Symbol key `admin` and a String key `admin` become the same entry. It collapses duplicate keys silently, keeping only the last. And it loses the wire ordering. Measured, not assumed: `scValToNative` on a two-entry map with the same key twice returns a single entry, and that is the behaviour this variant exists to avoid inheriting.
+
+**A typed `contractInstance` variant, shaped as `{ type: 'contractInstance', executable, storage }` after the SDK's `ScContractInstance`.** Rejected for v0.1. It is speculative typing with no validation surface: the shape is read off a type declaration rather than observed in an emission, and `contractInstance` has to compose with Soroban's runtime executable structure, which makes a wrong guess more costly than usual. Sprint 2's recurring pattern is that the draft says one thing and live testnet says another, and there is no emission here to check against. `scValToNative` itself declines to convert one, handing back the raw XDR struct. A typed variant waits for v0.2, when emission evidence and consumer demand exist; the migration is a compile-time type change.
+
 ### Consequences
 
 - New `ScVal` variants arrive as `unknown` rather than as an exception, so a protocol upgrade does not require an SDK upgrade to keep reading.
 - The indexer stores the extended set. Its JSON columns need no schema change, since the taxonomy lives in the value rather than the column type.
 - This union is the wire contract for `pulsar-decoder` v0.2. The Rust decoder must produce these variants, including the fallback, and any future extension is a coordinated change across both repos.
 - The decoder never throws. A value that fails mid-decode degrades to `unknown` with its XDR, so one corrupt value cannot discard the rest of a page.
+- A consumer reading a map iterates entries rather than indexing by key. That is the deliberate cost of keeping key type, ordering, and duplicates, and it is paid at the one place where the alternative loses data silently.
 - Verified against live testnet output: eight real contract events decoded to `symbol`, `address`, and `i128` with zero unknowns, and the `address` variant correctly carries `G`-prefixed account addresses as well as contract ids.

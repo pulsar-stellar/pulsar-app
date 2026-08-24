@@ -6,6 +6,16 @@ import { DecodedValueSchema } from '../src/types.js';
 
 const CONTRACT = 'CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L';
 
+const symbolKey = (text: string): xdr.ScVal => nativeToScVal(text, { type: 'symbol' });
+const u32 = (n: number): xdr.ScVal => nativeToScVal(n, { type: 'u32' });
+
+/**
+ * Builds a map from raw entries. `nativeToScVal` cannot express a non-string
+ * key, a duplicate key, or a deliberate ordering, all of which these tests need.
+ */
+const mapOf = (entries: ReadonlyArray<readonly [xdr.ScVal, xdr.ScVal]>): xdr.ScVal =>
+  xdr.ScVal.scvMap(entries.map(([key, val]) => new xdr.ScMapEntry({ key, val })));
+
 describe('scalar variants', () => {
   it.each([
     ['a symbol', nativeToScVal('deposit', { type: 'symbol' }), { type: 'symbol', value: 'deposit' }],
@@ -73,16 +83,16 @@ describe('containers', () => {
     expect(decodeScVal(xdr.ScVal.scvVec([]))).toEqual({ type: 'vec', value: [] });
   });
 
-  it('decodes a map with symbol keys', () => {
+  it('decodes a map as an ordered array of key/value pairs', () => {
     const input = nativeToScVal({ amount: 5 }, { type: { amount: ['symbol', 'u32'] } });
     expect(decodeScVal(input)).toEqual({
       type: 'map',
-      value: { amount: { type: 'u32', value: 5 } },
+      value: [{ key: { type: 'symbol', value: 'amount' }, value: { type: 'u32', value: 5 } }],
     });
   });
 
   it('decodes an empty map', () => {
-    expect(decodeScVal(xdr.ScVal.scvMap([]))).toEqual({ type: 'map', value: {} });
+    expect(decodeScVal(xdr.ScVal.scvMap([]))).toEqual({ type: 'map', value: [] });
   });
 
   it('recurses through nested containers', () => {
@@ -187,7 +197,120 @@ describe('containers the SDK types as possibly absent', () => {
       map: () => undefined,
       toXDR: () => 'AAAAEQ==',
     } as unknown as xdr.ScVal;
-    expect(decodeScVal(stub)).toEqual({ type: 'map', value: {} });
+    expect(decodeScVal(stub)).toEqual({ type: 'map', value: [] });
+  });
+});
+
+/**
+ * ADR-023 carries a map as an ordered array rather than as an object or a
+ * JavaScript `Map`. These pin the three things that choice exists to preserve:
+ * the key's own type, the wire ordering, and duplicate keys. `scValToNative`
+ * loses all three, so none of this is theoretical.
+ */
+describe('map fidelity', () => {
+  it('keeps each key at its own type rather than rendering it to a string', () => {
+    const decoded = decodeScVal(
+      mapOf([
+        [symbolKey('sym'), u32(1)],
+        [new Address(CONTRACT).toScVal(), u32(2)],
+        [nativeToScVal(3n, { type: 'i128' }), u32(3)],
+      ]),
+    );
+
+    expect(decoded).toEqual({
+      type: 'map',
+      value: [
+        { key: { type: 'symbol', value: 'sym' }, value: { type: 'u32', value: 1 } },
+        { key: { type: 'address', value: CONTRACT }, value: { type: 'u32', value: 2 } },
+        { key: { type: 'i128', value: '3' }, value: { type: 'u32', value: 3 } },
+      ],
+    });
+  });
+
+  it('distinguishes a symbol key from a string key of the same text', () => {
+    const decoded = decodeScVal(
+      mapOf([
+        [symbolKey('admin'), u32(1)],
+        [nativeToScVal('admin', { type: 'string' }), u32(2)],
+      ]),
+    );
+
+    expect(decoded.type).toBe('map');
+    if (decoded.type !== 'map') return;
+    expect(decoded.value.map((entry) => entry.key.type)).toEqual(['symbol', 'string']);
+    expect(decoded.value).toHaveLength(2);
+  });
+
+  it('keeps both entries when a key appears twice', () => {
+    const decoded = decodeScVal(
+      mapOf([
+        [symbolKey('a'), u32(1)],
+        [symbolKey('a'), u32(2)],
+      ]),
+    );
+
+    expect(decoded).toEqual({
+      type: 'map',
+      value: [
+        { key: { type: 'symbol', value: 'a' }, value: { type: 'u32', value: 1 } },
+        { key: { type: 'symbol', value: 'a' }, value: { type: 'u32', value: 2 } },
+      ],
+    });
+  });
+
+  it('preserves ordering across an XDR encode and decode cycle', () => {
+    const input = mapOf([
+      [symbolKey('c'), u32(3)],
+      [symbolKey('a'), u32(1)],
+      [symbolKey('b'), u32(2)],
+    ]);
+    const reencoded = xdr.ScVal.fromXDR(input.toXDR('base64'), 'base64');
+
+    expect(decodeScVal(reencoded)).toEqual(decodeScVal(input));
+  });
+
+  it('survives JSON.stringify with its structure intact', () => {
+    const decoded = decodeScVal(
+      mapOf([
+        [symbolKey('amount'), nativeToScVal(7n, { type: 'i128' })],
+        [new Address(CONTRACT).toScVal(), u32(1)],
+      ]),
+    );
+
+    expect(JSON.parse(JSON.stringify(decoded))).toEqual(decoded);
+  });
+});
+
+/**
+ * `contractInstance` is left to the fallback for v0.1 per ADR-023. Its shape is
+ * not observable in any event this project has seen, and `scValToNative` hands
+ * back the raw XDR struct rather than a native value, so a typed variant would
+ * be a guess. The consumer gets the base64 and can decode it themselves.
+ */
+describe('contractInstance falls back', () => {
+  const instance = xdr.ScVal.scvContractInstance(
+    new xdr.ScContractInstance({
+      executable: xdr.ContractExecutable.contractExecutableStellarAsset(),
+      storage: null,
+    }),
+  );
+
+  it('decodes to unknown rather than to a guessed shape', () => {
+    expect(decodeScVal(instance)).toEqual({ type: 'unknown', xdr: instance.toXDR('base64') });
+  });
+
+  it('carries XDR a caller can decode back to the original value', () => {
+    const decoded = decodeScVal(instance);
+    expect(decoded.type).toBe('unknown');
+    if (decoded.type !== 'unknown') return;
+    expect(xdr.ScVal.fromXDR(decoded.xdr, 'base64').switch().name).toBe('scvContractInstance');
+  });
+
+  it('is carried through a topic list without disturbing its neighbours', () => {
+    expect(decodeTopics([symbolKey('upgrade'), instance])).toEqual([
+      { type: 'symbol', value: 'upgrade' },
+      { type: 'unknown', xdr: instance.toXDR('base64') },
+    ]);
   });
 });
 
@@ -199,6 +322,7 @@ describe('every decoded value satisfies the schema', () => {
     ['bytes', nativeToScVal(Buffer.from('00', 'hex'))],
     ['address', new Address(CONTRACT).toScVal()],
     ['vec', nativeToScVal([1], { type: 'u32' })],
+    ['map', mapOf([[symbolKey('k'), u32(1)]])],
     ['void', xdr.ScVal.scvVoid()],
     ['unknown', xdr.ScVal.scvLedgerKeyContractInstance()],
   ])('%s parses against DecodedValueSchema', (_label, input) => {

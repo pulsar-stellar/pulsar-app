@@ -116,6 +116,14 @@ Two findings from step 32 make the case. The planned event id format composed `t
 
 The cost of skipping this is asymmetric. Checking costs one request. Not checking means the wrong shape reaches a schema, a database constraint, and a consumer's storage key before anything disagrees with it.
 
+## A library's convenience converter is not a wire mapping
+
+Helpers that turn a protocol value into an idiomatic native one optimize for the common case, and they drop what does not fit. They are the right tool for reading a value and the wrong one for defining a representation others will store.
+
+`scValToNative` on a Soroban map with the same key twice returns one entry: the last write wins, and the first is gone with no error. On a `contractInstance` it declines entirely, handing back the raw XDR struct rather than a native value. Neither is a bug. A JavaScript object cannot hold a duplicate key, and there is no idiomatic native form for a contract instance.
+
+The consequence is that a decoder must not be built by wrapping the convenience converter and trusting the result. Where the wire form carries something the native form cannot, the decoder handles that variant itself. Test for it directly: build the input the converter loses, decode it, and assert the loss did not happen.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
