@@ -140,6 +140,22 @@ Everything the showcase does not emit is invisible while it is the only source: 
 
 When verifying a decoder, take a second sample from unfiltered testnet traffic. The reference contract shows the decoder works; real traffic shows what it is missing.
 
+## Mock at the transport layer, not at the class layer
+
+When the code under test wraps a third-party SDK, intercept the network underneath that SDK rather than stubbing the SDK itself. A stubbed class tests the wrapper against an imagined SDK. Intercepting the transport keeps the real one inside the test surface, so its parsing, its validation, and its own error handling are all still running.
+
+The difference is not theoretical. `rpc.ts` is tested through the real `rpc.Server` with msw intercepting fetch, and that is the only reason a boundary showed up where nobody expected one: an event arriving with no `contractId` never reaches this SDK's mapper at all, because the upstream SDK builds a `Contract` while parsing the response and throws first. The failure therefore surfaces as a transport failure rather than a validation one. A stubbed client would have handed the mapper a clean object and confirmed a guard that production never reaches.
+
+The fixtures for such a test should be real captured responses. A hand-written fixture encodes what the author believes the wire looks like, which is the belief being tested.
+
+## Check that an assertion observes the behaviour and not the arrangement
+
+A test whose fixture holds shared state can pass because of the fixture rather than because of the code. Request counters, insertion order, and generator sequence are the usual sources: the arrangement advances on its own, and the assertion reads that movement instead of the thing it names.
+
+The independent-traversal test for `liveEventStream` had exactly this shape. Its handler served pages by request count, so the second traversal received page two, and the assertion comparing the two traversals was comparing different pages. The stream was independent, the test was not testing it. Rewriting the handler to answer by what the request actually asked for, a start ledger or a cursor, made a fresh traversal genuinely see the first page again.
+
+The check is to ask what the fixture would return if the code under test were wrong in the specific way the test exists to catch. If the answer is the same either way, the assertion is reading the arrangement.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
