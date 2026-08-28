@@ -787,3 +787,115 @@ The `map` variant is an ordered `Array<{ key: DecodedValue; value: DecodedValue 
 - The decoder never throws. A value that fails mid-decode degrades to `unknown` with its XDR, so one corrupt value cannot discard the rest of a page.
 - A consumer reading a map iterates entries rather than indexing by key. That is the deliberate cost of keeping key type, ordering, and duplicates, and it is paid at the one place where the alternative loses data silently.
 - Verified against live testnet output: eight real contract events decoded to `symbol`, `address`, and `i128` with zero unknowns, and the `address` variant correctly carries `G`-prefixed account addresses as well as contract ids.
+
+---
+
+## ADR-024: RPC-fetched events carry a prefixed synthetic id
+
+Date: 2026-08-28
+Status: accepted
+
+### Context
+
+`DecodedEvent.id` is the indexer's own primary key, a `BIGSERIAL` rendered as a string of digits. The direct-RPC path in step 32 produces the same type from a different source, and that source has an identifier of its own: every event in a `getEvents` response carries an `id` of the form `{toid}-{eventOrder}`, which also serves as the paging cursor.
+
+Two identifiers therefore exist for what a consumer sees as one type, and they come from namespaces that have nothing to do with each other. Nothing structural stops an indexer id and an RPC event ordinal from colliding as strings.
+
+An earlier draft composed the id as `rpc:{txHash}:{eventIndex}`. A live `getEvents` call killed it: five consecutive events returned three different `txHash` values with `transactionIndex` and `operationIndex` identical at zero on all of them, so neither index identified an event within its transaction. Only the id's second component incremented, and it did so across transactions. That finding is ADR-022.
+
+### Decision
+
+An event fetched over RPC gets `id: "rpc:{rpcId}"`, where `rpcId` is the event's own identifier exactly as RPC returned it.
+
+The prefix is load-bearing. It makes the two namespaces non-overlapping, so an id from one path can never be mistaken for an id from the other, and it makes the source visible in any log, database row, or bug report that carries an id.
+
+`eventIndex` comes from splitting the same identifier on `-` and reading the second component, per ADR-022. The id and the ordinal come from one field, so a malformed id fails both at once rather than producing an event with a plausible-looking wrong index.
+
+A prefixed id is not accepted by `client.event()`. `EventIdSchema` requires digits only, and an RPC id is not resolvable against the indexer, so passing one is rejected where the mistake is made.
+
+### Alternatives considered
+
+**Compose the id from `txHash` and a per-transaction index.** Rejected on evidence. RPC exposes no per-transaction event index, and the fields that look like one repeat across events.
+
+**Use RPC's id unprefixed.** Rejected. It makes the two namespaces overlap for no benefit, and a consumer storing events from both paths cannot tell which is which.
+
+**Give `DecodedEvent` a `source` field instead of a prefix.** Rejected for v0.1. It adds a field every consumer must check to a type where the id already answers the question, and an id passed around alone loses the tag while a prefix travels with it.
+
+### Consequences
+
+- Any consumer keying storage on `DecodedEvent.id` gets non-colliding keys across both paths without doing anything.
+- An event fetched over RPC and later fetched from the indexer has two different ids. They describe the same on-chain event, and reconciling them means comparing `(ledger, eventIndex)`, not ids.
+- The prefix is part of the wire contract. Changing it later invalidates stored keys, so it is fixed now.
+
+---
+
+## ADR-025: LiveEventQuery is a discriminated union, enforced at both layers
+
+Date: 2026-08-28
+Status: accepted
+
+### Context
+
+Stellar RPC's `getEvents` takes either a ledger range or a cursor, never both. ADR-013 verified this in the SDK's own declarations: `GetEventsRequest` is a discriminated union in which ledger-range mode declares `cursor?: never` and cursor mode declares `startLedger?: never`. Sending both is a protocol error.
+
+`fetchLiveEvents` is the SDK's wrapper over that call, and it can either mirror the constraint or flatten it into an optional-everything object and hope callers get it right.
+
+### Decision
+
+`LiveEventQuery` is a discriminated union with the same shape as the protocol's, and the constraint is enforced twice.
+
+```ts
+type LiveEventQuery =
+  | { startLedger: number; cursor?: never; limit?: number; filter?: EventFilter }
+  | { cursor: string; startLedger?: never; limit?: number; filter?: EventFilter };
+```
+
+At compile time the `never` members reject both fields together and reject neither. At runtime a Zod union rejects the same two cases with `PulsarValidationError`, because a caller in plain JavaScript, or one passing a value parsed from JSON, reaches the same function with no type checking behind them.
+
+Neither layer is redundant. The type catches the mistake where it is made and costs nothing at runtime; the schema catches what the type never saw.
+
+Verified that the union does not fight ordinary consumer code. Reassigning `query = { cursor: page.cursor }` after a first page type-checks with no cast and no widening.
+
+### Alternatives considered
+
+**A flat object with both fields optional, validated only at runtime.** Rejected. It moves a mistake TypeScript can catch at the keyboard into an exception at request time, and it invites the shape the protocol rejects.
+
+**Compile-time only, trusting the type.** Rejected. The SDK is published to JavaScript consumers too, and a query built from user input or a stored session is not type-checked by anything.
+
+**Two separate methods, `fetchLiveEventsFrom` and `fetchLiveEventsAfter`.** Rejected. It doubles the surface and makes the ordinary paging loop switch functions between the first page and the rest, which is worse than switching a field.
+
+### Consequences
+
+- A caller who spreads a previous query forward, `{ ...query, cursor }`, gets a compile error, because `startLedger` survives the spread. The fix is to build the continuation fresh. This is the one ergonomic cost, and it fails loudly rather than silently sending an invalid request.
+- Live RPC provides no exhaustion signal. `LiveEventsPage.cursor` is always a string, never null: a page carrying events returns the last event's id as its cursor, and an empty page returns a positional marker so paging can continue. A consumer paging manually with `fetchLiveEvents` owns the decision of when to stop, and `liveEventStream` polls indefinitely until the consumer breaks. Manufacturing an exhaustion signal, whether as a null cursor or a derived boolean, would have the SDK claim to know something about protocol state that only the protocol knows, and a consumer stopping on it would miss events arriving immediately after.
+
+---
+
+## ADR-026: DecodedEvent records whether its contract call succeeded
+
+Date: 2026-08-28
+Status: accepted
+
+### Context
+
+Every event in a `getEvents` response carries `inSuccessfulContractCall`. A reverted contract call still emits events, and they still land in the ledger. `DecodedEvent` had nowhere to put that flag, so an event from a call that failed was indistinguishable from one that committed.
+
+This is not hypothetical. A five-event sample from live testnet contained one event with the flag false.
+
+### Decision
+
+`DecodedEvent` gains `inSuccessfulContractCall: boolean`, required rather than optional, populated from the wire on both paths. The name matches the RPC field so the two line up without a lookup.
+
+Consumers choose their own filtering. The SDK reports what the ledger holds.
+
+### Alternatives considered
+
+**Filter the events out on the RPC path.** Rejected. It is silent data loss, and it makes the two paths disagree unless the indexer filters bug-for-bug identically. A consumer investigating a failed call would find the event missing rather than marked.
+
+**Leave it out for v0.1.** Rejected. A consumer summing transfer amounts would over-count reverted transfers with nothing in the data to reveal it, and a decoder that omits this is a decoder that misreports what happened on chain. CLAUDE.md's rule that the indexer never trusts contract data points the same way.
+
+### Consequences
+
+- A wire contract change. Section 7.1's events table gains an `in_successful_contract_call` boolean column, `DecodedEventPayloadSchema` gains the snake_case field, and `pulsar-decoder` v0.2 must produce it.
+- Consumer migration is additive: existing code keeps working and reads the new field only if it cares.
+- `DecodedEvent.name` is relaxed from a non-empty string to any string in the same change. `eventNameFromTopics` already returns an empty string when an event's first topic is not a Symbol, so the schema and the decoder contradicted each other. An off-convention event now degrades to a nameless event with its topics intact, per ADR-023's rule that one odd value must not discard a page. Consumers wanting only convention-following events filter on `event.name !== ''`.

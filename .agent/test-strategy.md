@@ -124,6 +124,22 @@ Helpers that turn a protocol value into an idiomatic native one optimize for the
 
 The consequence is that a decoder must not be built by wrapping the convenience converter and trusting the result. Where the wire form carries something the native form cannot, the decoder handles that variant itself. Test for it directly: build the input the converter loses, decode it, and assert the loss did not happen.
 
+## Another ecosystem's conventions are not evidence about this protocol
+
+REST pagination ends with a null cursor. JSON APIs use null for absence. A list endpoint that returns nothing has nothing more to give. None of these are facts about Stellar RPC, and reaching for them is how a wrong assumption gets into a type without anyone noticing it was an assumption.
+
+Live RPC never returns a null cursor. A page carrying events returns the last event's id as the cursor; an empty page returns a positional marker and paging continues from it. A tail has no end, so nothing in the protocol expresses one. Encoding an exhaustion signal would have meant inventing it.
+
+Four draft-time assumptions have now been wrong when checked against live output: the `getEvents` cursor mode being a flat object rather than a discriminated union, `eventIndex` meaning a position within a transaction, the `ScVal` coverage the taxonomy needed, and the null cursor. Verify each behavioral assumption against a live call before it reaches a type or a schema.
+
+## Sample beyond the reference contract
+
+`pulsar-core`'s showcase contract is a known emitter with fixed shapes, which makes it the right fixture for checking that decoding works. It is the wrong fixture for discovering what decoding has to handle, because its event surface is narrow by design.
+
+Everything the showcase does not emit is invisible while it is the only source: `ScVal` variants outside the four it uses, events whose first topic is not a Symbol, and events from reverted calls. That last one is not rare. A five-event sample from arbitrary testnet contracts contained one event with `inSuccessfulContractCall` false, which is what surfaced ADR-026.
+
+When verifying a decoder, take a second sample from unfiltered testnet traffic. The reference contract shows the decoder works; real traffic shows what it is missing.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
