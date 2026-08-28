@@ -30,6 +30,7 @@ describe('fetching an event that exists', () => {
       rawTopics: eventPayload.raw_topics,
       rawData: eventPayload.raw_data,
       emittedAt: eventPayload.emitted_at,
+      inSuccessfulContractCall: true,
     });
   });
 

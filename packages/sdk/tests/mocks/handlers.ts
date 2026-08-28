@@ -65,6 +65,7 @@ export const eventPayload = {
   raw_topics: ['AAAADwAAAAdkZXBvc2l0AA=='],
   raw_data: 'AAAACgAAAAAAAAAAAAAAADuaygA=',
   emitted_at: '2026-08-21T09:15:00Z',
+  in_successful_contract_call: true,
 } as const;
 
 export const eventHandlers = [

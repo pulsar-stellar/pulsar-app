@@ -31,6 +31,7 @@ const validEvent = {
   rawTopics: ['AAAADwAAAAdkZXBvc2l0AA=='],
   rawData: 'AAAACgAAAAAAAAAAAAAAADuaygA=',
   emittedAt: '2026-08-20T12:00:00Z',
+  inSuccessfulContractCall: true,
 };
 
 describe('ContractIdSchema', () => {

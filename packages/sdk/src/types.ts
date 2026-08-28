@@ -154,8 +154,15 @@ export const DecodedEventSchema = z.object({
    * ordering within a transaction still works.
    */
   eventIndex: z.number().int().nonnegative(),
-  /** The event's name, decoded from its first topic. */
-  name: z.string().min(1),
+  /**
+   * The event's name, decoded from its first topic.
+   *
+   * Empty when the first topic is not a Symbol, which means the emitter did
+   * not follow Soroban's naming convention. Per ADR-026 that degrades to a
+   * nameless event with its topics intact rather than failing the page.
+   * Filter on `name !== ''` to keep only convention-following events.
+   */
+  name: z.string(),
   topics: z.array(DecodedValueSchema),
   data: DecodedValueSchema,
   /** Base64 XDR of each topic, in the same order as `topics`. */
@@ -164,6 +171,15 @@ export const DecodedEventSchema = z.object({
   rawData: z.string(),
   /** Ledger close time as an ISO 8601 timestamp. */
   emittedAt: z.iso.datetime({ offset: true }),
+  /**
+   * Whether the contract call that emitted this event committed.
+   *
+   * A reverted call still emits events and they still land in the ledger, so
+   * this is the only thing separating them from committed ones. Required per
+   * ADR-026: the SDK reports what the ledger holds and leaves the filtering
+   * to the caller.
+   */
+  inSuccessfulContractCall: z.boolean(),
 });
 
 /** A decoded contract event. */
@@ -300,12 +316,13 @@ export const DecodedEventPayloadSchema = z.object({
   ledger: z.number().int().nonnegative(),
   tx_hash: z.string().min(1),
   event_index: z.number().int().nonnegative(),
-  name: z.string().min(1),
+  name: z.string(),
   topics_json: z.array(DecodedValueSchema),
   data_json: DecodedValueSchema,
   raw_topics: z.array(z.string()),
   raw_data: z.string(),
   emitted_at: z.iso.datetime({ offset: true }),
+  in_successful_contract_call: z.boolean(),
 });
 
 /**
@@ -340,6 +357,7 @@ export function toDecodedEvent(payload: z.infer<typeof DecodedEventPayloadSchema
     rawTopics: payload.raw_topics,
     rawData: payload.raw_data,
     emittedAt: payload.emitted_at,
+    inSuccessfulContractCall: payload.in_successful_contract_call,
   };
 }
 

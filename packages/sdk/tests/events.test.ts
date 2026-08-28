@@ -27,6 +27,7 @@ describe('querying events', () => {
       rawTopics: eventPayload.raw_topics,
       rawData: eventPayload.raw_data,
       emittedAt: eventPayload.emitted_at,
+      inSuccessfulContractCall: true,
     });
   });
 

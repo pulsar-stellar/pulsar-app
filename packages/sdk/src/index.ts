@@ -64,3 +64,18 @@ export {
   type ResolvedEventQuery,
   type ResolvedPulsarConfig,
 } from './types.js';
+
+export {
+  DEFAULT_POLL_INTERVAL_MS,
+  LiveEventFilterSchema,
+  LiveEventQuerySchema,
+  RPC_ID_PREFIX,
+  fetchLiveEvents,
+  liveEventStream,
+  toLiveDecodedEvent,
+  type LiveEventFilter,
+  type LiveEventQuery,
+  type LiveEventStreamOptions,
+  type LiveEventsPage,
+  type RawRpcEvent,
+} from './rpc.js';
