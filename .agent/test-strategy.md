@@ -156,6 +156,14 @@ The independent-traversal test for `liveEventStream` had exactly this shape. Its
 
 The check is to ask what the fixture would return if the code under test were wrong in the specific way the test exists to catch. If the answer is the same either way, the assertion is reading the arrangement.
 
+## A test that cannot run must skip, not return
+
+A test whose precondition is unmet, an unreachable service, an absent fixture, a missing credential, has to say so through the runner. An early `return` reports the test as passed, which is indistinguishable in the output from a run that actually verified something. The suite then gets greener the more of it stops working.
+
+Use the runner's own mechanism, `context.skip(reason)` in vitest, so the result reads as skipped and carries why. The reason matters as much as the status: "Stellar RPC unreachable" is actionable, a silent green is not.
+
+This is the same failure as an assertion that reads the arrangement instead of the behaviour. Both produce a passing test that establishes nothing, and both are invisible precisely because passing is what you wanted to see.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.

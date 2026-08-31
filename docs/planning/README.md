@@ -39,6 +39,10 @@ The working drafts were moved out of this directory on 2026-08-28 into a separat
 
 That move is what emptied this directory. The timeline is unambiguous: the planning repo was initialised at 11:51, its copy of this README was written at 12:17, and the originals disappeared from here at 12:19. Nothing was corrupted and nothing was lost. An earlier note in this file recorded the cause as unidentified, which was wrong; it had simply not been correlated against the other repository yet.
 
-The drafts are mirrored back into this directory so a working session can read them without leaving the repo, and they stay gitignored here. `pulsar-stellar-planning` is the origin. When anything in this directory changes, mirror the change there in the same session, or the next machine picks up a stale copy.
+The drafts are mirrored back into this directory so a working session can read them without leaving the repo, and they stay gitignored here. `pulsar-stellar-planning` is the origin.
+
+The sync rule: **whenever `docs/planning/` or `.agent/decisions.md` changes in any working repo, mirror the change to `pulsar-stellar-planning` in the same session.** Otherwise the next machine picks up a stale copy.
+
+The ADR log is included because it is the same kind of content. It is already tracked here, so the risk of losing it is lower, but a mirror means the decisions can be read without cloning this repo, and it means one rule covers everything a maintainer needs rather than a judgment call per file.
 
 The durability point stands regardless. A decision that matters belongs in the ADR log, which is tracked, reviewed, and present in every clone. This directory is a convenience, and its contents live somewhere else.
