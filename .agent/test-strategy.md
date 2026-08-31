@@ -164,6 +164,22 @@ Use the runner's own mechanism, `context.skip(reason)` in vitest, so the result 
 
 This is the same failure as an assertion that reads the arrangement instead of the behaviour. Both produce a passing test that establishes nothing, and both are invisible precisely because passing is what you wanted to see.
 
+## A verification needs a negative control
+
+A check that something works passes vacuously when that something never loaded. A consumer typecheck that resolves no declarations at all reports the same green as one where every type is correct, because in both cases nothing complained.
+
+Pair the positive case with a negative one: assert that a specific thing which ought to fail does fail, and for the right reason. Step 37's consumer check imports `PulsarClient` and expects success, then imports `requestMaybe`, now internal, and expects TS2305. The second is what proves the first was reading real declarations.
+
+This is the same defect as an assertion that reads the arrangement, and as a test that returns instead of skipping. All three produce green from a system that verified nothing, and all three are invisible because green is what you were hoping for.
+
+## Never point another package manager at pnpm's store
+
+Verifying consumer experience means building a scratch project outside the repo and pointing it at the package. The tempting shortcut is to symlink into `node_modules/.pnpm/`, which is shared, content-addressed, and not yours.
+
+Running `npm install` in such a project prunes through those symlinks. It walks what it believes is its own tree, finds packages absent from its lockfile, and deletes them. That emptied `@types+node@22.20.1` in this repo's store, which broke lint and typecheck across the whole package with errors pointing at files nobody had touched, in `decode.ts` and `http.ts`, which is a confusing way to learn what happened. Recovering took a full `rm -rf node_modules` and reinstall, because `pnpm install`, even with `--force`, checks the lockfile rather than whether the files are still there.
+
+Use `npm pack` and install the tarball, or copy the built package into the scratch project. Both give a truer reading of consumer experience anyway, since that is what a consumer actually receives. If a symlink is unavoidable, never run another package manager's install in that project afterwards.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
