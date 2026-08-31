@@ -899,3 +899,42 @@ Consumers choose their own filtering. The SDK reports what the ledger holds.
 - A wire contract change. Section 7.1's events table gains an `in_successful_contract_call` boolean column, `DecodedEventPayloadSchema` gains the snake_case field, and `pulsar-decoder` v0.2 must produce it.
 - Consumer migration is additive: existing code keeps working and reads the new field only if it cares.
 - `DecodedEvent.name` is relaxed from a non-empty string to any string in the same change. `eventNameFromTopics` already returns an empty string when an event's first topic is not a Symbol, so the schema and the decoder contradicted each other. An off-convention event now degrades to a nameless event with its topics intact, per ADR-023's rule that one odd value must not discard a page. Consumers wanting only convention-following events filter on `event.name !== ''`.
+
+---
+
+## ADR-027: buildContractCall takes an Account, copies it, and returns an unprepared transaction
+
+Date: 2026-08-31
+Status: accepted
+
+### Context
+
+Section 6 specifies `buildContractCall(contractId, method, args, invoker)` returning an unsigned `Transaction`. Verifying that against `@stellar/stellar-sdk` 16.2.0 before writing it surfaced three behaviours the spec does not address.
+
+`TransactionBuilder` needs a sequence number, so an address alone cannot produce a transaction. `build()` then increments the sequence of whatever `Account` it is handed: building twice from one account yields sequence 101 and 102, and the caller's object is left at 102. And the transaction that comes out is unsimulated, carrying an empty Soroban footprint and only the 100 stroop base fee, so submitting it fails.
+
+The SDK also accepts a non-`ScVal` argument without complaint. `contract.call('deposit', 'raw-string')` returns an operation carrying one argument and no error, so the malformed call surfaces at submission with nothing pointing back at the argument.
+
+### Decision
+
+`buildContractCall` takes an already-fetched `Account`, copies it internally, and returns an unsigned and unprepared `Transaction`. It stays synchronous and touches no network. Arguments are checked to be `ScVal` before assembly.
+
+The copy is the load-bearing part. Without it, two calls built from one account claim two different sequence numbers, and a caller who submits only one has silently burned the other. That is the class of silent corruption this project rejects elsewhere, and the repo's immutability rule already forbids mutating a caller's object.
+
+The required preparation step is documented on the function itself, with the full flow shown, rather than mentioned in passing.
+
+### Alternatives considered
+
+**Take an address and fetch the account.** Rejected. It turns a pure builder into an async network call, so a caller building three invocations pays three round trips they did not ask for, and an unreachable network becomes a failure mode of assembly.
+
+**Accept either an address or an account.** Rejected. The return type becomes a promise even when nothing is fetched, and one function acquires two unrelated failure modes.
+
+**Prepare the transaction before returning it.** Rejected. Simulation failures, which include contract reverts and insufficient balances, would then surface from a function whose name promises only assembly, and a caller could not tell those from an argument mistake.
+
+**Ship `buildContractCall` and `prepareContractCall` separately.** Rejected. Two functions where the spec asked for one, and picking the wrong one fails at submission rather than at compile time.
+
+### Consequences
+
+- A caller fetches an account once and builds as many calls from it as they like, all claiming the same sequence number, which is what someone building a batch actually wants.
+- Preparation is the caller's step and is visible in the function's own documentation.
+- The argument check belongs to this SDK because the underlying one does not make it.

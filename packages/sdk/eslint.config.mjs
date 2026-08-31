@@ -7,6 +7,9 @@
 import base from '../../eslint.config.mjs';
 
 export default [
+  // Contract bindings generated at test time by the ADR-016 composition
+  // check. Not ours to lint.
+  { ignores: ['tmp/**'] },
   ...base,
   {
     files: ['src/**/*.ts', 'tests/**/*.ts'],

@@ -36,3 +36,7 @@ docs/planning/*
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Generated contract bindings, produced at test time by the ADR-016
+# composition check. Keyed by contract ID, network, and SDK version.
+tmp/

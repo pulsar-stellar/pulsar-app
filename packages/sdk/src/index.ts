@@ -79,3 +79,25 @@ export {
   type LiveEventsPage,
   type RawRpcEvent,
 } from './rpc.js';
+
+export {
+  DEFAULT_CALL_TIMEOUT_SECONDS,
+  asAdminChangeEvent,
+  asDepositEvent,
+  asEmitCustomEvent,
+  asInitializeEvent,
+  asTransferEvent,
+  asWithdrawEvent,
+  buildContractCall,
+  parseTopics,
+  scValToNative,
+  type AdminChangeEvent,
+  type BindingEvent,
+  type ContractCallOptions,
+  type DepositEvent,
+  type EmitCustomEvent,
+  type InitializeEvent,
+  type TransferEvent,
+  type WithdrawEvent,
+} from './contract.js';
+
