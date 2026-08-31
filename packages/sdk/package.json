@@ -1,6 +1,6 @@
 {
   "name": "@pulsar-stellar/sdk",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript client for Soroban contract events, over the Pulsar indexer or straight from RPC",
   "license": "Apache-2.0",
   "repository": {
