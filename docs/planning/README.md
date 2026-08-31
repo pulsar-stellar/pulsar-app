@@ -33,10 +33,12 @@ Files expected in this directory locally, none of them tracked:
 
 A superseded section in a draft gets a stale marker at the top of that section pointing at the tracked ADR that replaced it, rather than being rewritten in place.
 
-## This directory has lost its contents once
+## Where these files actually live
 
-On 2026-08-28 every untracked file here vanished. `README.md` survived, because it is tracked, but it was rewritten with identical content at the same moment, and the `docs/` directory's own mtime moved with it. That combination is the signature of a checkout restoring the tracked file after something removed its untracked siblings.
+The working drafts were moved out of this directory on 2026-08-28 into a separate private repository, `pulsar-stellar-planning`, which holds the planning material for all four Pulsar repos under per-repo directories. Its first commit says why: cross-PC continuity.
 
-What was ruled out: no git operation in the reflog corresponds to the time, no configured hook touches this repository (the `PreCompact` hook writes only to `~/.claude/sessions`), and nothing else in the working tree was modified. The cause is still unidentified, and file timestamps disagree with commit timestamps by several days, so correlating precisely is not reliable.
+That move is what emptied this directory. The timeline is unambiguous: the planning repo was initialised at 11:51, its copy of this README was written at 12:17, and the originals disappeared from here at 12:19. Nothing was corrupted and nothing was lost. An earlier note in this file recorded the cause as unidentified, which was wrong; it had simply not been correlated against the other repository yet.
 
-The practical consequence is that this directory is not storage. It already says a decision that matters belongs in the ADR log; treat that as a durability rule and not only an editorial one. Anything here is one unexplained event away from being gone, and the ADR log, `.agent/`, and `docs/` are the parts that survive.
+The drafts are mirrored back into this directory so a working session can read them without leaving the repo, and they stay gitignored here. `pulsar-stellar-planning` is the origin. When anything in this directory changes, mirror the change there in the same session, or the next machine picks up a stale copy.
+
+The durability point stands regardless. A decision that matters belongs in the ADR log, which is tracked, reviewed, and present in every clone. This directory is a convenience, and its contents live somewhere else.
