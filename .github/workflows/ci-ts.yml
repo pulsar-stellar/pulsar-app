@@ -44,3 +44,9 @@ jobs:
 
       - name: Build
         run: pnpm -r --if-present build
+
+      # Checks the published artifact rather than the source: the exports map,
+      # both module formats loading, and the tarball's contents. Nothing in the
+      # unit suite would notice any of those breaking.
+      - name: Verify build output
+        run: pnpm -r --if-present verify:build
