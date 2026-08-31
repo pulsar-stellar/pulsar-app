@@ -1,13 +1,30 @@
 /**
  * Public surface of `@pulsar-stellar/sdk`.
  *
- * Exports are added here as each piece lands. Anything not exported from this
- * file is internal and may change without a major version.
+ * Everything a consumer is meant to use is exported here. Anything not
+ * exported from this file is internal and may change without a major version,
+ * which is the point of listing the surface in one place rather than letting
+ * it accumulate.
+ *
+ * Three things are deliberately absent.
+ *
+ * The HTTP layer, `request` and `requestMaybe`, is how this SDK talks to the
+ * indexer. A consumer calls a client method instead; exporting the transport
+ * would freeze an internal contract and invite calls that bypass validation.
+ *
+ * The wire payload schemas and their mappers, `DecodedEventPayloadSchema`,
+ * `toDecodedEvent` and their siblings, describe the snake_case shapes moving
+ * between this SDK and the indexer. They are an implementation detail of that
+ * conversation. Consumers get the camelCase types the mappers produce.
+ *
+ * The response envelope, `EnvelopeSchema` and `ErrorEnvelopeSchema`, is the
+ * same: ADR-017 fixes it as the indexer's contract, and this SDK unwraps it so
+ * nobody else has to know it exists.
+ *
+ * @packageDocumentation
  */
 
 export { PulsarClient } from './client.js';
-
-export { decodeScVal, decodeTopics, eventNameFromTopics } from './decode.js';
 
 export {
   findPulsarError,
@@ -18,19 +35,11 @@ export {
   type PulsarNetworkErrorOptions,
 } from './errors.js';
 
-export {
-  request,
-  requestMaybe,
-  type HttpMethod,
-  type RequestOptions,
-  type RequestResult,
-} from './http.js';
+export { decodeScVal, decodeTopics, eventNameFromTopics } from './decode.js';
 
 export {
   ContractIdSchema,
-  ContractInfoPayloadSchema,
   ContractInfoSchema,
-  ContractListPayloadSchema,
   ContractStatusSchema,
   DecodedEventSchema,
   DecodedMapEntrySchema,
@@ -38,26 +47,17 @@ export {
   DEFAULT_TIMEOUT_MS,
   EVENT_QUERY_DEFAULT_LIMIT,
   EVENT_QUERY_MAX_LIMIT,
-  EnvelopeSchema,
-  ErrorEnvelopeSchema,
-  DecodedEventPayloadSchema,
   EventIdSchema,
-  EventListPayloadSchema,
   EventQuerySchema,
-  HealthPayloadSchema,
   PulsarConfigSchema,
   PulsarNetworkSchema,
-  toContractInfo,
-  toDecodedEvent,
   type ContractInfo,
   type ContractStatus,
   type DecodedEvent,
   type DecodedMapEntry,
   type DecodedValue,
-  type EventsPage,
-  type Envelope,
-  type ErrorEnvelope,
   type EventQuery,
+  type EventsPage,
   type PingResult,
   type PulsarConfig,
   type PulsarNetwork,
@@ -67,21 +67,18 @@ export {
 
 export {
   DEFAULT_POLL_INTERVAL_MS,
+  fetchLiveEvents,
+  liveEventStream,
   LiveEventFilterSchema,
   LiveEventQuerySchema,
   RPC_ID_PREFIX,
-  fetchLiveEvents,
-  liveEventStream,
-  toLiveDecodedEvent,
   type LiveEventFilter,
   type LiveEventQuery,
-  type LiveEventStreamOptions,
   type LiveEventsPage,
-  type RawRpcEvent,
+  type LiveEventStreamOptions,
 } from './rpc.js';
 
 export {
-  DEFAULT_CALL_TIMEOUT_SECONDS,
   asAdminChangeEvent,
   asDepositEvent,
   asEmitCustomEvent,
@@ -89,6 +86,7 @@ export {
   asTransferEvent,
   asWithdrawEvent,
   buildContractCall,
+  DEFAULT_CALL_TIMEOUT_SECONDS,
   parseTopics,
   scValToNative,
   type AdminChangeEvent,
@@ -100,4 +98,3 @@ export {
   type TransferEvent,
   type WithdrawEvent,
 } from './contract.js';
-
