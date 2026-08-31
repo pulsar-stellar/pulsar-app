@@ -52,21 +52,30 @@ Documentation is not in this repo. It lives in `pulsar-stellar/pulsar-docs` and 
 
 ## 6. Current phase and definition of done
 
-Sprint 2. Phase A of the numbered build sequence, steps 1 through 15, is complete and pushed. The workspace installs clean on a fresh clone, `ci-ts` is green, `.env.example` carries every variable the spec lists, and these three `.agent/` files exist. The sequence itself lives in the maintainer-local planning draft, which is not tracked; see `docs/planning/README.md`.
+Sprint 2 is closed. The SDK is published as `@pulsar-stellar/sdk@0.1.0` on npm. Tag `v0.1.0-app` is on GitHub with a release body covering what was delivered, verified, and not yet built. 428 tests at 100 percent coverage. 27 ADRs in `.agent/decisions.md`.
+
+Sprint 2 ran three phases. Phase A (steps 1 through 15) scaffolded the workspace, CI, and toolchain. Phase B (steps 16 through 19) built the SDK skeleton: `PulsarClient` for the indexer path, `fetchLiveEvents`/`liveEventStream` for the RPC path, a full ScVal decoder, `buildContractCall`, and dual ESM/CJS output. Phase C (steps 20 through 37) completed the SDK with bindings, integration tests, README extraction as a build gate, and the publish pipeline. Every phase landed its verification gate before the next started.
 
 Phase A landed four things the numbered sequence did not call for, each in its own commit: `scripts/verify-env-parity.sh`, which the spec requires but no step creates; `pnpm-lock.yaml`, without which a frozen-lockfile CI install cannot run; a correction moving pnpm strictness settings out of `.npmrc`, which pnpm 11 ignores, into `pnpm-workspace.yaml`; and a CI path-filter fix after `ci-go` and `ci-web` fired against sub-stacks that do not exist yet.
 
 The toolchain is Node 22 LTS with pnpm 11, which supersedes the draft's Node 20 pin. pnpm 11 requires Node 22.13 or newer, so the two pins could not both hold. See ADR-012.
 
-Next is Phase B, steps 16 through 19, the SDK skeleton. Its entry gate is discharged: the `@stellar/stellar-sdk` claims are verified against the installed package and current RPC documentation, and the findings are in ADR-013. Write against that entry, not against the draft's section 6. In short: pin `16.2.0` exactly, declare the peer range `>=16.2.0 <17.0.0`, remember that `getEvents` takes either a ledger range or a cursor and never both, read `oldestLedger` from responses rather than hardcoding a seven-day retention window, and note that the event field is `topic`, singular.
+Several decisions recorded during Sprint 2 contradicted the planning draft. The event id format was not constructible as designed (ADR-022, ADR-024). The value taxonomy could not represent a u32 (ADR-023). Live RPC never returns a null cursor, so pages carry a plain string (ADR-025). Real events carry a flag marking reverted calls, which had nowhere to go (ADR-026). TransactionBuilder mutates the account it is handed, which would have burned sequence numbers silently (ADR-027). These are the load-bearing ADRs; the others fill in details around them.
 
-### Decided, pending implementation at step 32
+### What Sprint 2 delivered
 
-Both settled before the work starts, to be recorded as ADRs when the code lands.
+- `PulsarClient`: `ping`, `registerContract`, `getContract`, `listContracts`, `events`, `eventStream`, `event`.
+- `fetchLiveEvents` and `liveEventStream`: discriminated union query enforced at compile time by `never` members and at runtime by Zod.
+- Decoder covering every ScVal variant Soroban commonly emits, with an `unknown` fallback carrying base64.
+- `buildContractCall` plus six helpers bridging wire events to generated bindings.
+- Dual ESM and CommonJS output with declarations.
+- README code blocks extracted and compiled as a build gate.
+- TypeScript 5.6.3 consumer-floor compilation with node types absent.
+- Live-tail testnet example returning real events through the built package.
 
-**Synthetic ids on the RPC path.** RPC-fetched events get `id: "rpc:{rpcId}"`, using RPC's own stable per-event identifier rather than composing one from `txHash` and an index, which live testnet output showed is not constructible. The `{toid}-{eventOrder}` encoding also sorts lexicographically in ledger order, which a composed id would not. Indexer-fetched events keep the digit-only id from ADR-021. One `DecodedEvent` type covers both, and the prefix stops a consumer comparing ids across sources by accident. Rejected: a nullable `id`, which weakens the type for the indexer majority, and a separate `LiveEvent` type, which splits the abstraction and pushes bridging onto consumers. An `rpc:` id passed to `event()` is correctly rejected by `EventIdSchema`, since an RPC-path event is not retrievable from the indexer by id.
+### Next
 
-**Live queries use a discriminated union.** `fetchLiveEvents` takes either `{ startLedger, limit?, filter? }` or `{ cursor, limit?, filter? }`, with `never` on the opposite field, mirroring the mutual exclusivity ADR-013 verified in `getEvents`. It returns `{ events, cursor, latestLedger }`. `liveEventStream(query, { pollIntervalMs? })` wraps it for SDK-driven polling; both land together. Rejected: runtime validation alone, which relies on remembering, and split initial/next-page methods, which trade ergonomics for nothing the type system cannot give. Type-level tests are required: passing both fields must fail to compile, and passing neither must fail to compile.
+Sprint 3 opens the Go indexer (Phase D). The SDK's wire contracts define what the indexer must produce: the response envelope (ADR-017), the events query contract (ADR-021), eventIndex as a ledger ordinal (ADR-022), the value taxonomy (ADR-023), and the success flag on every event (ADR-026). Absence requires both a 404 and a `not_found` envelope (ADR-019), and registration is idempotent on identical input (ADR-018).
 
 ## 7. Drips Wave context
 
