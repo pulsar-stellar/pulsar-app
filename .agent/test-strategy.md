@@ -226,6 +226,31 @@ asserting the scanner finds as many names as `grep` finds distinct literals in
 `config.go`. A check whose coverage is a list somebody wrote out needs a
 separate count to confirm the list is complete.
 
+## A mutation that breaks the build has not tested anything
+
+Checking that a test catches a defect means introducing the defect and watching
+the test go red. That only works if the test still runs. Delete a field or a
+type a test file references and the package stops compiling: the suite reports
+failure, the assertion never executes, and the two outcomes are indistinguishable
+from the outside.
+
+Step 50 hit this. Deleting `LastIndexedLedger` from the contract struct produced
+`FAIL ... [build failed]`, which was read as the schema-drift test working. It
+was not: the test file referenced the field, so nothing in it ran. Renaming the
+`db` tag instead keeps the file valid Go, and the test then fired properly and
+printed the mismatch it was written to print.
+
+Refine the mutation until the file still compiles:
+
+- rename a struct tag rather than delete the field
+- change a constant's value rather than remove the constant
+- invert or weaken the logic inside a function rather than delete the function
+- ignore an error rather than remove the call that produces it
+
+The tell is a failure message that names the build rather than the assertion. If
+the output does not contain the words the test was written to print, the test did
+not run, and the mutation has proved nothing.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
