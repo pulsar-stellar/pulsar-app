@@ -31,7 +31,8 @@ Everything authoritative is tracked. Read in this order:
 
 ## Current phase
 
-Sprint 2. Phase A of the Section 12 build sequence, steps 1 through 15, is complete. Phase B, the SDK skeleton, starts at step 16. Its verification gate is discharged: see ADR-013 for the verified `@stellar/stellar-sdk` shapes and the four rules that follow from them, and write against that rather than against any planning draft. Do not skip forward past step 19.
+Sprint 3, Phase D (indexer implementation).
+Sprint 2 closed at commit 4cc82e76d5930680ee21447f942fbbabb1a9fb53 with v0.1.0-app published to npm.
 
 Node 22 LTS and pnpm 11 are the pinned toolchain, superseding Section 3.1's Node 20 row. See ADR-012.
 
