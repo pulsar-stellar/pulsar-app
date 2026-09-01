@@ -1083,3 +1083,51 @@ A local Go older than the pin is not a blocker and does not need replacing. `GOT
 - A contributor on any Go 1.21 or newer can build and test the indexer without installing anything, because the toolchain fetch is automatic. Below 1.21 there is no toolchain directive and a real install is required.
 - Raising the pin is a one-line change in `go.mod` that moves CI with it, and it is an ADR amendment rather than a silent bump.
 - `docs/requirements.md`'s "1.23+" row stays accurate as the floor. This ADR names the pin that sits above it.
+
+---
+
+## ADR-031: The Postgres DSN must forbid a plaintext fallback, because pgx defaults to allowing one
+Date: 2026-09-01
+Status: accepted
+
+### Context
+
+The indexer's Postgres driver takes a connection string from `PULSAR_INDEXER_DB_URL`. Planning for the storage layer assumed pgx defaults to `sslmode=require`, so that only an operator explicitly writing `sslmode=disable` could end up on an unencrypted connection.
+
+Checking that against `github.com/jackc/pgx/v5` v5.10.0 before writing the driver found the opposite. pgx follows libpq, whose default is `sslmode=prefer`: attempt TLS, and fall back to an unencrypted connection if the server declines.
+
+`pgx.ParseConfig` makes the fallback visible in the returned config.
+
+| DSN | `TLSConfig` | Fallbacks | Plaintext possible |
+|---|---|---|---|
+| `postgres://u:p@h:5432/db` | set | 1, with `TLSConfig == nil` | yes |
+| `postgres://u:p@h:5432/db?sslmode=prefer` | set | 1, with `TLSConfig == nil` | yes |
+| `postgres://u:p@h:5432/db?sslmode=require` | set | 0 | no |
+| `postgres://u:p@h:5432/db?sslmode=verify-full` | set | 0 | no |
+| `host=h user=u password=p dbname=db` | set | 1, with `TLSConfig == nil` | yes |
+
+The fallback is not an error path. It is a successful connection carrying the password and every row in cleartext, and nothing in pgx reports that the downgrade happened. Section 7.8 provisions managed Postgres on Render and passes an internal connection string through the environment, so a string that omits `sslmode` is the likely case rather than an exotic one.
+
+### Decision
+
+The Postgres driver parses the DSN with `pgx.ParseConfig` and refuses to start if the resulting config permits a plaintext connection: either `TLSConfig` is nil, or any entry in `Fallbacks` has a nil `TLSConfig`. The error names `sslmode` and the values that satisfy the check.
+
+The test is structural rather than textual. Reading `sslmode` out of the string would have to handle the URL form and the keyword form separately, would miss a value pgx normalizes, and would need updating whenever libpq gains a mode. Asking the parsed config whether plaintext is reachable answers the question that actually matters, in one check, for every DSN shape.
+
+`PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS` opts out, for a local Docker Postgres with no certificate. It defaults to false and is documented as local-only.
+
+### Alternatives considered
+
+**Append `sslmode=require` when the DSN omits it.** Rejected. It rewrites a connection string the operator supplied, which is its own surprise, and it leaves an explicit `sslmode=prefer` or `allow` connecting in plaintext because those are not omissions.
+
+**Log a warning and connect anyway.** Rejected. A warning in a log nobody reads is how this class of problem reaches production, and the project already refuses this trade elsewhere: ADR-028's page-size cap rejects at startup rather than clamping quietly, for the same reason.
+
+**Trust the deployment to set `sslmode` correctly.** Rejected. It is exactly the assumption that was checked here and found false, and it fails open.
+
+### Consequences
+
+- A Postgres DSN without an explicit `sslmode` of `require`, `verify-ca`, or `verify-full` fails at startup with a message naming the variable and the accepted values. This is a deliberate break for anyone whose DSN currently omits it.
+- `.env.example`'s commented Postgres line already carries `?sslmode=require` and stays correct.
+- `PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS` is added to config and to `.env.example`, defaulting to false.
+- The check runs on the parsed config, so it covers both the URL and keyword DSN forms without separate parsing.
+- The DSN itself is never logged at any level, because it embeds the password. Only the driver name and the resolved pool bounds are.
