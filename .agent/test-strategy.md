@@ -196,6 +196,36 @@ out=$(go vet ./... 2>&1); rc=$?
 
 Same defect as an assertion that reads the arrangement, a test that returns instead of skipping, and a verification with no negative control. All of them produce green from something that did not pass.
 
+## Check what a mechanism actually does before replacing it
+
+A check that reports nothing can be broken, or it can be working correctly on
+input that does not contain what it looks for. Those need opposite responses,
+and the output alone does not distinguish them.
+
+`verify-env-parity.sh` printed "no environment lookups found in source" for the
+whole of the indexer's early build, and that was read as the script not
+scanning Go. It always scanned Go. Phase A wrote it for all three sub-stacks,
+with `os.Getenv` and `os.LookupEnv` in its pattern and `--include='*.go'` on its
+grep. The real gap was narrower and further along: `internal/config` takes an
+injected `Getenv` function, so it has no `os.Getenv` call sites at all, and the
+names live in string literals passed to helper functions. The scanner matched
+what it was written to match, and the codebase had stopped containing it.
+
+Extending the pattern to the helper shape closed it in a few lines. Replacing
+the script would have thrown away a working scanner and its TypeScript coverage
+to rebuild the same thing around one blind spot.
+
+The tell is a claim about a tool's behaviour that came from reading its output
+rather than reading the tool. Open the file first. It is cheaper than the
+rewrite, and it is the difference between a gap and a defect.
+
+The same reading error has a second form worth naming. When the pattern was
+extended, the helper list was assembled from memory and omitted `positiveInt`,
+leaving two variables invisible. What caught it was an independent count:
+asserting the scanner finds as many names as `grep` finds distinct literals in
+`config.go`. A check whose coverage is a list somebody wrote out needs a
+separate count to confirm the list is complete.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
