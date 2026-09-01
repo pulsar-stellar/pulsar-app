@@ -11,11 +11,15 @@
   "homepage": "https://github.com/pulsar-stellar/pulsar-app/tree/main/packages/sdk#readme",
   "bugs": "https://github.com/pulsar-stellar/pulsar-app/issues",
   "keywords": [
-    "stellar",
-    "soroban",
-    "contract-events",
-    "indexer",
-    "xdr"
+  "stellar",
+  "soroban",
+  "contract-events",
+  "indexer",
+  "xdr",
+  "stellar-rpc",
+  "typescript-sdk",
+  "smart-contracts",
+  "blockchain"
   ],
   "type": "module",
   "sideEffects": false,
