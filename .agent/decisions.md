@@ -987,7 +987,7 @@ The four Sprint 2 ADRs stand as written. Seven further facts are recorded here, 
 
 - The Go RPC client decodes `topic`, and a test asserts the field name rather than only the decoded shape.
 - The client's error path keys on the `error` field. A 200 with an error body is a failure, and a transport-level non-200 is a separate failure.
-- Page size is clamped to 10000 at the config boundary, so an operator cannot set a limit the server will reject on every call.
+- Page size above 10000 is rejected at startup with an error naming the limit and the offending value, so an operator cannot set a limit the server will reject on every call. Rejecting rather than clamping is deliberate: a clamp would run the indexer at a page size the operator did not write, and say nothing. Amended 2026-09-01, having originally read "clamped", when the config loader in step 41 made the difference concrete.
 - Backfill handles `-32600` by re-reading the current window and resuming from the new floor, and it records that it skipped ledgers rather than failing.
 - The tail loop terminates a page walk on an empty `events` array, not on the cursor.
 - Decoder fixtures are recorded files under version control. The showcase contract is not a live test dependency.
