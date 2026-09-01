@@ -21,6 +21,8 @@ var allowedSubstitutions = []struct {
 	{"now()", "CURRENT_TIMESTAMP", "now() is a syntax error on SQLite, so the migration cannot apply"},
 	{"JSONB", "TEXT", "SQLite has no JSONB; it accepts the token and stores TEXT affinity"},
 	{"TEXT[]", "TEXT", "SQLite has no array type; it accepts TEXT[] as a plain text column"},
+	{"USING GIN (topics_json)", "(topics_json)",
+		"SQLite has no GIN and cannot index JSON containment at all; it gets a plain index that serves ordering but not topic_contains"},
 }
 
 // The per-driver files must stay structurally identical: the same statements in
@@ -78,29 +80,56 @@ func compareDialects(t *testing.T, postgresSQL, sqliteSQL string) {
 	}
 
 	for i := range p {
-		pWords, sWords := strings.Fields(p[i]), strings.Fields(s[i])
-
-		if len(pWords) != len(sWords) {
-			t.Errorf("line %d: postgres has %d tokens and sqlite has %d, so the two lines are not the same statement.\n  postgres: %s\n  sqlite:   %s",
-				i+1, len(pWords), len(sWords), p[i], s[i])
+		if p[i] == s[i] {
 			continue
 		}
 
-		for j := range pWords {
-			pTok, sTok := trimPunctuation(pWords[j]), trimPunctuation(sWords[j])
-			if pTok == sTok {
-				continue
+		// Some divergences are whole clauses rather than single tokens, so
+		// substitutions are applied to the line until it either matches or
+		// stops changing. A line that still differs is reported in full.
+		reconciled, applied := applySubstitutions(p[i])
+		if reconciled == s[i] {
+			for _, why := range applied {
+				t.Logf("line %d: %s", i+1, why)
 			}
-			if why, ok := substitutionReason(pTok, sTok); ok {
-				t.Logf("line %d: %s -> %s (%s)", i+1, pTok, sTok, why)
-				continue
-			}
-			t.Errorf("line %d: postgres has %q, sqlite has %q, which is not an allowed substitution.\n"+
-				"  postgres: %s\n  sqlite:   %s\n"+
-				"  Allowed pairs are %s. Adding one is an ADR-029 amendment, not a test edit.",
-				i+1, pTok, sTok, p[i], s[i], allowedPairsList())
+			continue
 		}
+
+		pWords, sWords := strings.Fields(p[i]), strings.Fields(s[i])
+		if len(pWords) == len(sWords) {
+			for j := range pWords {
+				pTok, sTok := trimPunctuation(pWords[j]), trimPunctuation(sWords[j])
+				if pTok == sTok {
+					continue
+				}
+				t.Errorf("line %d: postgres has %q, sqlite has %q, which is not an allowed substitution.\n"+
+					"  postgres: %s\n  sqlite:   %s\n"+
+					"  Allowed pairs are %s. Adding one is an ADR-029 amendment, not a test edit.",
+					i+1, pTok, sTok, p[i], s[i], allowedPairsList())
+			}
+			continue
+		}
+
+		t.Errorf("line %d: the two lines differ and no allowed substitution reconciles them.\n"+
+			"  postgres: %s\n  sqlite:   %s\n"+
+			"  After applying every allowed substitution the postgres line reads:\n    %s\n"+
+			"  Allowed pairs are %s. Adding one is an ADR-029 amendment, not a test edit.",
+			i+1, p[i], s[i], reconciled, allowedPairsList())
 	}
+}
+
+// applySubstitutions rewrites a Postgres line into its SQLite form, applying
+// every allowed substitution that matches and reporting which ones fired.
+func applySubstitutions(line string) (string, []string) {
+	var applied []string
+	for _, sub := range allowedSubstitutions {
+		if !strings.Contains(line, sub.postgres) {
+			continue
+		}
+		line = strings.ReplaceAll(line, sub.postgres, sub.sqlite)
+		applied = append(applied, fmt.Sprintf("%s -> %s (%s)", sub.postgres, sub.sqlite, sub.why))
+	}
+	return line, applied
 }
 
 // significantLines drops comments and blank lines and collapses runs of
@@ -121,15 +150,6 @@ func significantLines(sql string) []string {
 // compare as the same token.
 func trimPunctuation(token string) string {
 	return strings.TrimRight(token, ",;")
-}
-
-func substitutionReason(postgresToken, sqliteToken string) (string, bool) {
-	for _, sub := range allowedSubstitutions {
-		if sub.postgres == postgresToken && sub.sqlite == sqliteToken {
-			return sub.why, true
-		}
-	}
-	return "", false
 }
 
 func allowedPairsList() string {
@@ -214,6 +234,52 @@ func TestDialectComparisonRejectsRealDrift(t *testing.T) {
 			go func() {
 				defer close(done)
 				compareDialects(probe, c.postgres, c.sqlite)
+			}()
+			<-done
+
+			if probe.Failed() != c.wantFail {
+				t.Errorf("comparison failed = %v, want %v", probe.Failed(), c.wantFail)
+			}
+		})
+	}
+}
+
+// A phrase substitution rewrites a whole clause, so it has more scope to mask
+// drift than a single-token pair does. These cases pin what it must still
+// reject on the line the GIN entry exists for.
+func TestPhraseSubstitutionDoesNotMaskDrift(t *testing.T) {
+	t.Parallel()
+
+	const pg = "CREATE INDEX idx_events_topics ON events USING GIN (topics_json);"
+
+	cases := []struct {
+		name     string
+		sqlite   string
+		wantFail bool
+	}{
+		{"the substitution itself", "CREATE INDEX idx_events_topics ON events (topics_json);", false},
+		{"different column", "CREATE INDEX idx_events_topics ON events (data_json);", true},
+		{"different index name", "CREATE INDEX idx_events_topics_x ON events (topics_json);", true},
+		{"different table", "CREATE INDEX idx_events_topics ON contracts (topics_json);", true},
+		{"statement missing", "", true},
+
+		// Identical files are not a difference, so this comparison passes and
+		// should: a SQLite file carrying USING GIN is caught by actually
+		// applying the migration, where SQLite rejects it as a syntax error.
+		// This test checks that the two files agree; step 49 checks that what
+		// they say can run.
+		{"GIN left in place on sqlite, caught on apply instead", pg, false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			probe := &testing.T{}
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				compareDialects(probe, pg, c.sqlite)
 			}()
 			<-done
 
