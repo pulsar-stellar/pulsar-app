@@ -77,6 +77,12 @@ Several decisions recorded during Sprint 2 contradicted the planning draft. The 
 
 Sprint 3 opens the Go indexer (Phase D). The SDK's wire contracts define what the indexer must produce: the response envelope (ADR-017), the events query contract (ADR-021), eventIndex as a ledger ordinal (ADR-022), the value taxonomy (ADR-023), and the success flag on every event (ADR-026). Absence requires both a 404 and a `not_found` envelope (ADR-019), and registration is idempotent on identical input (ADR-018).
 
+### Open gaps carried forward
+
+**The Postgres migration path has never been executed.** Steps 44 through 49 built the storage layer and validated it against SQLite only. Everything Postgres-specific is verified structurally rather than by running it: the DSN's TLS refusal is checked against `pgx.ParseConfig`'s output (ADR-031), the migration files are checked against their SQLite counterparts by the ADR-029 diff test, and the statement splitter is unit tested because pgx's extended protocol rejects the multi-statement `Exec` SQLite accepts. No Postgres server has applied `0001_init` or `0002_events_index`.
+
+The cause is environmental, not a decision: the machine this was built on has no Docker, so testcontainers-go could not run, and writing tests that only CI could execute would mean pushing work never exercised locally. The gap is real and worth closing with a dedicated step wherever Docker is available. Until then, treat "the Postgres schema applies" as unproven.
+
 ## 7. Drips Wave context
 
 The toolkit is aimed at a Drips Wave submission. That shapes two things. Repo hygiene is a deliverable, not an afterthought: branch protection, CONTRIBUTING, SECURITY, and a README that matches the pattern of approved Stellar repos all get a dedicated sprint before submission. And contributor-facing surface matters, because outside contributors are expected to work mostly in this repo rather than in `pulsar-core`, which stays reviewer-only until v1.0. Write issues and code with a stranger in mind.
