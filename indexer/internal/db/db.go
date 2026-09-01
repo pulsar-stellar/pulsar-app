@@ -8,6 +8,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"strings"
 )
@@ -141,4 +142,33 @@ func KindNames() []string {
 func (d Driver) String() string {
 	return fmt.Sprintf("driver=%s migrations=%s pool_max=%d pool_min=%d",
 		d.Kind, d.MigrationsDir, d.PoolMax, d.PoolMin)
+}
+
+// ConnOptions are the values needed to actually connect, as opposed to the
+// values Resolve needs to decide which engine is in play.
+type ConnOptions struct {
+	DSN string
+
+	// AllowInsecureTLS permits a Postgres DSN that could complete an
+	// unencrypted connection. Local development only. See ADR-031.
+	AllowInsecureTLS bool
+}
+
+// Open connects to the database the Driver describes.
+//
+// The switch mirrors Resolve's and fails closed the same way, so a Driver that
+// was built by hand rather than by Resolve cannot reach an engine that is not
+// supported. The returned handle is lazy: both engines validate what they can
+// without a round trip and leave the first connection to the caller's Ping.
+func Open(d Driver, opts ConnOptions) (*sql.DB, error) {
+	switch d.Kind {
+	case KindSQLite:
+		return openSQLite(d, opts.DSN)
+	case KindPostgres:
+		return openPostgres(d, opts.DSN, opts.AllowInsecureTLS)
+	default:
+		return nil, fmt.Errorf(
+			"database driver %q is not supported; expected one of %s",
+			d.Kind, strings.Join(KindNames(), ", "))
+	}
 }
