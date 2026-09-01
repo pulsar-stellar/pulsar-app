@@ -1,0 +1,18 @@
+-- Records whether the contract call that emitted an event committed.
+--
+-- Section 7.1's schema predates ADR-026 and has no column for this, so the
+-- indexer could not produce the in_successful_contract_call field the SDK's
+-- DecodedEventPayloadSchema requires on every event. A reverted call still
+-- emits events and they still land in the ledger, so this flag is the only
+-- thing separating them from committed ones. Live testnet returned it false on
+-- two of six events in a single page, per ADR-028, so it is not an edge case.
+--
+-- DEFAULT TRUE applies only to rows already present, of which there are none in
+-- any deployed database. New rows always carry an explicit value from the
+-- decoder; the default exists so the column can be NOT NULL without a
+-- backfill.
+--
+-- BOOLEAN needs no per-driver spelling. SQLite accepts the token and stores it
+-- with INTEGER affinity as 1 or 0, which database/sql scans into a Go bool, so
+-- this file is identical for both engines.
+ALTER TABLE events ADD COLUMN in_successful_contract_call BOOLEAN NOT NULL DEFAULT TRUE;

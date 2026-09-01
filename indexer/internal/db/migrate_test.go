@@ -4,12 +4,59 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/db"
+	"github.com/pulsar-stellar/pulsar-app/indexer/migrations"
 )
+
+// allVersions is derived from the shipped migrations rather than hard-coded, so
+// adding a migration does not require editing every count in this file.
+func allVersions(t *testing.T) []int {
+	t.Helper()
+
+	ms, err := migrations.For(migrations.DirSQLite)
+	if err != nil {
+		t.Fatalf("loading migrations: %v", err)
+	}
+	versions := make([]int, 0, len(ms))
+	for _, m := range ms {
+		versions = append(versions, m.Version)
+	}
+	if len(versions) == 0 {
+		t.Fatal("no migrations are shipped")
+	}
+	return versions
+}
+
+func latestVersion(t *testing.T) int {
+	t.Helper()
+	versions := allVersions(t)
+	return versions[len(versions)-1]
+}
+
+func reversed(versions []int) []int {
+	out := make([]int, len(versions))
+	for i, v := range versions {
+		out[len(versions)-1-i] = v
+	}
+	return out
+}
+
+func equalInts(got, want []int) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
 
 const showcase = "CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L"
 
@@ -97,8 +144,8 @@ func TestUpAppliesEveryMigrationInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Up: %v", err)
 	}
-	if len(applied) != 2 || applied[0] != 1 || applied[1] != 2 {
-		t.Fatalf("Up applied %v, want [1 2]", applied)
+	if want := allVersions(t); !equalInts(applied, want) {
+		t.Fatalf("Up applied %v, want %v", applied, want)
 	}
 
 	want := []string{"contracts", "events", "schema_migrations"}
@@ -110,8 +157,8 @@ func TestUpAppliesEveryMigrationInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("Version = %d, want 2", version)
+	if want := latestVersion(t); version != want {
+		t.Errorf("Version = %d, want %d", version, want)
 	}
 }
 
@@ -207,8 +254,14 @@ func TestDownToOneReversesOnly0002(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Down: %v", err)
 	}
-	if len(reverted) != 1 || reverted[0] != 2 {
-		t.Fatalf("Down reverted %v, want [2]", reverted)
+	var wantReverted []int
+	for _, v := range reversed(allVersions(t)) {
+		if v > 1 {
+			wantReverted = append(wantReverted, v)
+		}
+	}
+	if !equalInts(reverted, wantReverted) {
+		t.Fatalf("Down reverted %v, want %v", reverted, wantReverted)
 	}
 
 	if got := indexNames(t, handle); len(got) != 0 {
@@ -235,8 +288,8 @@ func TestDownToZeroLeavesOnlyTheBookkeepingTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Down: %v", err)
 	}
-	if len(reverted) != 2 || reverted[0] != 2 || reverted[1] != 1 {
-		t.Fatalf("Down reverted %v, want [2 1], newest first", reverted)
+	if want := reversed(allVersions(t)); !equalInts(reverted, want) {
+		t.Fatalf("Down reverted %v, want %v, newest first", reverted, want)
 	}
 
 	if got := tableNames(t, handle); !equalStrings(got, []string{"schema_migrations"}) {
@@ -263,8 +316,8 @@ func TestUpAfterDownRebuildsTheSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Up: %v", err)
 	}
-	if len(applied) != 2 {
-		t.Fatalf("second Up applied %v, want both migrations again", applied)
+	if want := allVersions(t); !equalInts(applied, want) {
+		t.Fatalf("second Up applied %v, want %v again", applied, want)
 	}
 
 	insertContract(t, handle, showcase)
@@ -294,8 +347,8 @@ func TestUpIsIdempotent(t *testing.T) {
 	if err := handle.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&rows); err != nil {
 		t.Fatalf("counting schema_migrations: %v", err)
 	}
-	if rows != 2 {
-		t.Errorf("schema_migrations has %d rows, want 2", rows)
+	if want := len(allVersions(t)); rows != want {
+		t.Errorf("schema_migrations has %d rows, want %d", rows, want)
 	}
 }
 
@@ -313,6 +366,7 @@ func TestVersionRefusesASchemaWithAGap(t *testing.T) {
 	if _, err := handle.Exec("DELETE FROM schema_migrations WHERE version = 1"); err != nil {
 		t.Fatalf("removing the record: %v", err)
 	}
+	latest := latestVersion(t)
 
 	_, err := db.Version(ctx, handle)
 	if err == nil {
@@ -321,8 +375,8 @@ func TestVersionRefusesASchemaWithAGap(t *testing.T) {
 	if !errors.Is(err, db.ErrDirtySchema) {
 		t.Errorf("error %v is not ErrDirtySchema", err)
 	}
-	if !strings.Contains(err.Error(), "1") || !strings.Contains(err.Error(), "2") {
-		t.Errorf("error %q does not name both versions", err.Error())
+	if !strings.Contains(err.Error(), "1") || !strings.Contains(err.Error(), fmt.Sprint(latest)) {
+		t.Errorf("error %q does not name both the missing version and the highest", err.Error())
 	}
 }
 
@@ -415,6 +469,66 @@ func TestAFailureLeavesEarlierMigrationsApplied(t *testing.T) {
 	}
 	if got := indexNames(t, handle); contains(got, "idx_events_topics") {
 		t.Errorf("indexes = %v; a later statement of the failed migration was committed", got)
+	}
+}
+
+// 0003 adds the ADR-026 flag the SDK requires on every event. SQLite has no
+// boolean type and stores the column with INTEGER affinity, so the round trip
+// through a Go bool is checked rather than assumed.
+func TestEventSuccessFlagRoundTripsAsABool(t *testing.T) {
+	t.Parallel()
+
+	handle, driver := newSQLite(t)
+	if _, err := db.Up(context.Background(), handle, driver); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	insertContract(t, handle, showcase)
+
+	if _, err := handle.Exec(
+		`INSERT INTO events
+		 (contract_id, ledger, tx_hash, event_index, name, topics_json, data_json,
+		  raw_topics, raw_data, emitted_at, in_successful_contract_call)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		showcase, 4430000, "9f4067a3", 0, "transfer",
+		`["AAAADwAAAANmZWUA"]`, `{"amount":100}`, `["AAAADwAAAANmZWUA"]`, "AAAACg==",
+		"2026-09-01T10:53:07Z", false); err != nil {
+		t.Fatalf("inserting a reverted event: %v", err)
+	}
+	if _, err := handle.Exec(
+		`INSERT INTO events
+		 (contract_id, ledger, tx_hash, event_index, name, topics_json, data_json,
+		  raw_topics, raw_data, emitted_at, in_successful_contract_call)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+		showcase, 4430000, "d10d31e5", 1, "transfer",
+		`["AAAADwAAAANmZWUA"]`, `{"amount":100}`, `["AAAADwAAAANmZWUA"]`, "AAAACg==",
+		"2026-09-01T10:53:07Z", true); err != nil {
+		t.Fatalf("inserting a committed event: %v", err)
+	}
+
+	rows, err := handle.Query("SELECT in_successful_contract_call FROM events ORDER BY event_index")
+	if err != nil {
+		t.Fatalf("reading the flag: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var flags []bool
+	for rows.Next() {
+		var flag bool
+		if err := rows.Scan(&flag); err != nil {
+			t.Fatalf("scanning the flag into a bool: %v", err)
+		}
+		flags = append(flags, flag)
+	}
+	if len(flags) != 2 || flags[0] || !flags[1] {
+		t.Errorf("flags = %v, want [false true]", flags)
+	}
+
+	// Reverting 0003 removes the column again.
+	if _, err := db.Down(context.Background(), handle, driver, 2); err != nil {
+		t.Fatalf("Down to 2: %v", err)
+	}
+	if _, err := handle.Query("SELECT in_successful_contract_call FROM events"); err == nil {
+		t.Error("the column survived a reversal of 0003")
 	}
 }
 
