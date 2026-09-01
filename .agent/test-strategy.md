@@ -180,6 +180,22 @@ Running `npm install` in such a project prunes through those symlinks. It walks 
 
 Use `npm pack` and install the tarball, or copy the built package into the scratch project. Both give a truer reading of consumer experience anyway, since that is what a consumer actually receives. If a symlink is unavoidable, never run another package manager's install in that project afterwards.
 
+## A pipe hides the exit status of everything left of it
+
+Bash reports a pipeline's status from its rightmost command. `go vet ./... | tail -3` exits 0 whenever `tail` succeeds, which is always, no matter what `go vet` did. A pre-commit check written that way reports green from a command that failed.
+
+This shipped a red commit in Sprint 3. Step 39 left `indexer/` with a `go.mod` and no packages. `go vet ./...` and `go test ./...` both exit 1 on a module with no packages, and `go build ./...` exits 0, so the module genuinely could not satisfy `ci-go.yml`. The local check said all three passed, because each was piped through `tail` to keep the output short, and `$?` was read after the pipe. CI found it on the first run.
+
+The filter is the tell. Piping through `tail`, `head`, `grep`, or `sed` to keep output readable is exactly when the status gets swallowed, and it is invisible because the output still looks like the output of the command you ran.
+
+Either set `set -o pipefail` before the check, or capture the status without a pipe at all:
+
+```sh
+out=$(go vet ./... 2>&1); rc=$?
+```
+
+Same defect as an assertion that reads the arrangement, a test that returns instead of skipping, and a verification with no negative control. All of them produce green from something that did not pass.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
