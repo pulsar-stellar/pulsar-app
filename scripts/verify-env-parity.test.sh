@@ -95,6 +95,68 @@ export const url = process.env.NEXT_PUBLIC_PULSAR_INDEXER_URL;
 EOF
 run_sandbox "ts lookup declared in .env.example" 0
 
+# internal/config takes an injected Getenv, so its variables are read through
+# helper calls rather than os.Getenv. Without these three assertions the whole
+# indexer is invisible to the scanner while it reports a clean pass.
+reset_sandbox
+cat > "$sandbox/indexer/config.go" <<'EOF'
+package config
+
+func Load(getenv func(string) string) string {
+	return required(getenv, "PULSAR_INDEXER_HELPER_MISSING")
+}
+EOF
+run_sandbox "config helper naming a variable missing from .env.example" 1
+
+reset_sandbox
+cat > "$sandbox/indexer/config.go" <<'EOF'
+package config
+
+func Load(getenv func(string) string) string {
+	return required(getenv, "PULSAR_INDEXER_RPC_URL")
+}
+EOF
+run_sandbox "config helper naming a declared variable" 0
+
+# Every helper gets its own fixture. A combined one would be a weak control:
+# with five helpers in a single file, four still force a failure when the fifth
+# stops matching, so the assertion stays green while coverage silently shrinks.
+# positiveInt was missed on the first pass of this pattern and cost two
+# invisible variables, which is the failure these cases exist to catch.
+for helper_case in \
+  'withDefault|_ = withDefault(getenv, "PULSAR_INDEXER_HELPER_MISSING", "x")' \
+  'positiveInt|_ = positiveInt(getenv, "PULSAR_INDEXER_HELPER_MISSING", 1)' \
+  'optionalPositiveInt|_ = optionalPositiveInt(getenv, "PULSAR_INDEXER_HELPER_MISSING")' \
+  'boolean|_ = boolean(getenv, "PULSAR_INDEXER_HELPER_MISSING", false)' \
+  'contractList|_ = contractList(getenv, "PULSAR_INDEXER_HELPER_MISSING")'
+do
+  helper_name="${helper_case%%|*}"
+  helper_call="${helper_case#*|}"
+
+  reset_sandbox
+  {
+    printf 'package config\n\n'
+    printf 'func Load(getenv func(string) string) {\n'
+    printf '\t%s\n' "$helper_call"
+    printf '}\n'
+  } > "$sandbox/indexer/config.go"
+  run_sandbox "config helper $helper_name is matched" 1
+done
+
+# A helper call shown in a comment is documentation, not a reference. Matching
+# it would make the check fire on prose and erode trust in its failures.
+reset_sandbox
+cat > "$sandbox/indexer/config.go" <<'EOF'
+package config
+
+// Load reads configuration. Callers pass os.Getenv. For example,
+// required(getenv, "PULSAR_INDEXER_ONLY_IN_A_COMMENT") reads a required value.
+func Load(getenv func(string) string) string {
+	return required(getenv, "PULSAR_INDEXER_RPC_URL") // withDefault(getenv, "PULSAR_INDEXER_ALSO_A_COMMENT", "x")
+}
+EOF
+run_sandbox "helper calls inside comments are not references" 0
+
 # Sources present, no lookups in them. The script passes here by design, and
 # pinning it means a future change to that branch is a deliberate one.
 reset_sandbox

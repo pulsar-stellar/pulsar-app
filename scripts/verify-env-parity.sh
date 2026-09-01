@@ -28,14 +28,32 @@ if [ ${#search_paths[@]} -eq 0 ]; then
   exit 0
 fi
 
-# process.env.NAME, process.env['NAME'], os.Getenv("NAME"), os.LookupEnv("NAME")
+# Three accessor shapes are recognised:
+#
+#   process.env.NAME and process.env['NAME']            TypeScript
+#   os.Getenv("NAME") and os.LookupEnv("NAME")          Go, direct
+#   required(getenv, "NAME") and friends                Go, injected
+#
+# The third exists because internal/config takes a Getenv function rather than
+# calling os.Getenv, so it has no direct call sites for this to match. Those
+# helpers are the injected design's equivalent of an os.Getenv call, and without
+# them the indexer's variables are invisible to this check while it reports a
+# clean pass.
+pattern="process\.env\.[A-Z][A-Z0-9_]*"
+pattern="$pattern|process\.env\[['\"][A-Z][A-Z0-9_]*['\"]\]"
+pattern="$pattern|os\.(Getenv|LookupEnv)\(\"[A-Z][A-Z0-9_]*\"\)"
+pattern="$pattern|(required|withDefault|positiveInt|optionalPositiveInt|boolean|contractList)\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*,[[:space:]]*\"[A-Z][A-Z0-9_]*\""
+
+# Line comments are stripped before names are extracted, so a helper call shown
+# in a comment does not count as a reference.
 referenced="$(
-  grep -rhoE \
-    "process\.env\.[A-Z][A-Z0-9_]*|process\.env\[['\"][A-Z][A-Z0-9_]*['\"]\]|os\.(Getenv|LookupEnv)\(\"[A-Z][A-Z0-9_]*\"\)" \
+  grep -rhE "$pattern" \
     "${search_paths[@]}" \
     --include='*.ts' --include='*.tsx' --include='*.go' \
     --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist \
     2>/dev/null \
+  | sed 's://.*::' \
+  | grep -oE "$pattern" \
   | grep -oE '[A-Z][A-Z0-9_]{2,}' \
   | grep -vE '^(NODE_ENV)$' \
   | sort -u || true
