@@ -1142,3 +1142,47 @@ The test is structural rather than textual. Reading `sslmode` out of the string 
 - `PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS` is added to config and to `.env.example`, defaulting to false.
 - The check runs on the parsed config, so it covers both the URL and keyword DSN forms without separate parsing.
 - The DSN itself is never logged at any level, because it embeds the password. Only the driver name and the resolved pool bounds are.
+
+---
+
+## ADR-032: Timestamps are scanned through a helper and always written as RFC3339 strings
+Date: 2026-09-01
+Status: accepted
+
+### Context
+
+`contracts.added_at` and `events.emitted_at` are `TIMESTAMPTZ` on both engines. The models carry them as `time.Time`, which the SDK expects to reach the wire as ISO 8601 with an offset.
+
+Verified against `modernc.org/sqlite` v1.57.0 before writing the store, three facts make that impossible to do uniformly.
+
+**SQLite never yields a `time.Time`.** Scanning `added_at` into one fails with `unsupported Scan, storing driver.Value type string into type *time.Time`. The `_time_format=sqlite` DSN parameter does not change it, and `_time_format=rfc3339` is rejected outright. Postgres returns a native timestamp that scans without help, so the same field is fillable on one engine and not the other.
+
+**The value SQLite returns is not ISO 8601.** A column filled by `DEFAULT CURRENT_TIMESTAMP` reads back as `2026-09-01 15:28:50`: no `T`, no offset. `ContractInfoPayloadSchema` requires `z.iso.datetime({ offset: true })`, so the value needs normalising even once it is read as a string.
+
+**Binding a `time.Time` writes Go's `String()` output, silently.** `Exec` with a `time.Time` parameter returns no error and stores `2026-09-01 15:29:26 +0000 UTC`. That is not RFC3339, not what any reader expects, and nothing reports it. Writing an explicit RFC3339 string instead stores `2026-09-01T15:29:26Z` exactly.
+
+The third is the same failure shape as `BIGSERIAL` in ADR-029: the driver accepts what it is given, reports success, and the wrong value surfaces somewhere else entirely. It does not affect contract registration, where `added_at` comes from the column default and is never bound, but `events.emitted_at` is bound from RPC on every insert.
+
+### Decision
+
+The store reads timestamps through one helper that accepts all three shapes it can encounter, a `time.Time` from Postgres, SQLite's `2006-01-02 15:04:05`, and RFC3339 from the indexer's own writes, and normalises every one to UTC. Anything else is an error naming what it received.
+
+The store never binds a `time.Time` as a parameter. Timestamps are written as `t.UTC().Format(time.RFC3339Nano)` on both engines.
+
+The models keep `time.Time`. The divergence is a persistence detail and does not reach the wire contract, which ADR-017 and the SDK's schemas already fix.
+
+### Alternatives considered
+
+**A `sql.Scanner` and `driver.Valuer` type on the model fields.** Rejected for now. It gives the cleanest call sites, but it changes both models and their tests, and its `Valuer` would bind a string where Postgres expects a `timestamptz`, relying on server-side inference that cannot be verified in this environment. See the open Postgres gap in `.agent/context.md`.
+
+**Declare the SQLite columns `TEXT`, as a fifth ADR-029 allowlist entry.** Rejected. It describes the storage more honestly, but it requires amending two shipped migrations and still needs the same scan helper and the same write discipline, so it costs a schema change and buys nothing at the boundary that matters.
+
+**Bind `time.Time` and accept SQLite's format.** Rejected outright. It is the corruption this ADR exists to prevent.
+
+### Consequences
+
+- One scan helper in the store handles every timestamp column, and its tests cover all three input shapes plus the rejection path.
+- Timestamp writes are RFC3339 strings. A reviewer seeing a `time.Time` passed to `Exec` in this package should treat it as a bug.
+- `events.emitted_at` is the first column this actually protects, at step 55, since `contracts.added_at` is never bound.
+- The helper's Postgres branch, accepting a `time.Time` unchanged, is the one path that cannot be exercised here. It is covered by the same gap already recorded for the Postgres migration path.
+- If the model fields later become a custom type, this decision is what that change supersedes.
