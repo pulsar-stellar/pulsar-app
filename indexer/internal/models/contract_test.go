@@ -31,6 +31,13 @@ func sample() models.Contract {
 // The struct is only right if it matches the table it reads from. Comparing db
 // tags against the migration catches a column added, removed or renamed on one
 // side only, which would otherwise surface as a scan error at runtime.
+//
+// This parses the CREATE TABLE statement, which is correct only while nothing
+// alters contracts. The moment a migration adds, drops or renames a column on
+// this table, move to the approach in event_test.go, which applies the
+// migrations and reads pragma_table_info from the result. Parsing 0001 alone
+// after an ALTER would report agreement that is not there, which is the
+// reassuring direction to be wrong in.
 func TestStructTagsMatchTheContractsTable(t *testing.T) {
 	t.Parallel()
 

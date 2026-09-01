@@ -251,6 +251,29 @@ The tell is a failure message that names the build rather than the assertion. If
 the output does not contain the words the test was written to print, the test did
 not run, and the mutation has proved nothing.
 
+## A stale marker says the rest of the section is current
+
+Marking part of a document stale makes a claim about everything you did not
+mark. A reader who sees one caveat at the top of a section reasonably concludes
+the remaining content was checked and stands, which is exactly the conclusion
+the marker's author usually has not earned.
+
+Section 7.1's schema carried a stale marker about the `UNIQUE` constraint,
+correctly pointing at ADR-022. The same section was also missing a column ADR-026
+requires, `in_successful_contract_call`, and nothing said so. The narrow marker
+read as "the constraint is wrong, the rest is fine", and the migration written
+from that section shipped ten of the eleven fields the SDK requires. It was found
+at step 51, three migrations later, rather than at step 47 where the schema was
+written.
+
+When marking something stale, either say what the marker does not cover, or mark
+the whole section. "Stale on the constraint; the column list has not been checked
+against the ADRs recorded since" costs a sentence and does not make a promise
+nobody verified.
+
+The general shape: a partial warning is read as a complete one. This is the
+documentation form of a test that passes by observing nothing.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
