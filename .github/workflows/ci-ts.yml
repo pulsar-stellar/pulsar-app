@@ -30,6 +30,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Verify env parity self-test
+        run: ./scripts/verify-env-parity.test.sh
+
       - name: Verify env parity
         run: ./scripts/verify-env-parity.sh
 
