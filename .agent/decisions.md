@@ -1048,3 +1048,38 @@ ADR-003 is not amended. Its consequences clause already reads "no engine-specifi
 - Both drivers keep an autoincrementing signed 64-bit primary key, so ADR-021's string serialization on the wire is unchanged and correct on both.
 - The five tracked documents that present SQLite as supported all remain accurate: `.env.example`, `.agent/glossary.md`, `.agent/context.md`, `docs/requirements.md`, and `docs/roadmap-product.md`. This decision amends none of them.
 - `docs/roadmap-product.md`'s requirement that both drivers pass the same test suite still holds, and the per-driver split is what makes it achievable rather than what threatens it.
+
+---
+
+## ADR-030: The indexer pins Go 1.26.7, and the toolchain directive carries contributors on older Go
+Date: 2026-09-01
+Status: accepted
+
+### Context
+
+`docs/requirements.md` requires Go 1.23 or newer for the indexer and says the version is pinned in `go.mod`. It does not name a version, and "or newer" is not a pin.
+
+The machine this module was initialized on carries Go 1.22.2 from its distribution, which is below that floor. Running `go mod init` there would have written `go 1.22.2`, and `ci-go.yml` reads `go-version-file: indexer/go.mod`, so the wrong pin would have provisioned a below-floor toolchain in CI as well. Nothing in the build would have failed to point at it.
+
+### Decision
+
+`indexer/go.mod` pins `go 1.26.7`.
+
+Go 1.26.7 is a mature release still inside the support window, which covers the latest two major versions. Go 1.27.0 was available and was not chosen, on the same reasoning ADR-012 used when the scaffolding machine carried Node 24 and the repo pinned Node 22 LTS: a component that has not been written yet does not need to be the first thing exercising a `.0`.
+
+A local Go older than the pin is not a blocker and does not need replacing. `GOTOOLCHAIN` defaults to `auto`, so the `go` directive drives an automatic toolchain download and the installed binary acts only as a bootstrap. Verified on the 1.22.2 machine: a module declaring `go 1.25.0` built under a fetched 1.25.0, and a module declaring `go 1.26.7` downloaded and built under 1.26.7. `actions/setup-go` reads the same directive, so CI and local development resolve to one version from one source.
+
+### Alternatives considered
+
+**Pin Go 1.27.0.** Rejected on the ADR-012 precedent above. It is a fine version and this is a preference for the settled one, revisitable once 1.27 has a patch release or two.
+
+**Pin `go 1.23` as a floor and let each machine use whatever it has.** Rejected. It reintroduces the drift the pin exists to remove, and it means CI and a contributor can compile the same code under different toolchains without either noticing.
+
+**Require contributors to install Go 1.26 before working on the indexer.** Rejected. `GOTOOLCHAIN=auto` already solves it with no instruction to follow and no step to forget, and adding a manual install to the setup path is friction this project removes elsewhere.
+
+### Consequences
+
+- `indexer/go.mod` carries `go 1.26.7`, and CI provisions that version from the same line rather than from a separate workflow pin.
+- A contributor on any Go 1.21 or newer can build and test the indexer without installing anything, because the toolchain fetch is automatic. Below 1.21 there is no toolchain directive and a real install is required.
+- Raising the pin is a one-line change in `go.mod` that moves CI with it, and it is an ADR amendment rather than a silent bump.
+- `docs/requirements.md`'s "1.23+" row stays accurate as the floor. This ADR names the pin that sits above it.
