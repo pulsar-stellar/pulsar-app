@@ -1043,7 +1043,18 @@ ADR-003 is not amended. Its consequences clause already reads "no engine-specifi
 ### Consequences
 
 - Two migration files per schema change instead of one. The cost is bounded by the next item.
-- A test asserts that the per-driver files for a given migration number differ only in id column type declarations. Drift in any other clause fails the suite mechanically, so the two files cannot diverge in ways a reviewer has to catch by eye.
+- A test asserts that the per-driver files for a given migration number are structurally identical: the same statements in the same order, over the same tables, with the same columns in the same order and the same constraints. They may differ only in a named allowlist of type and default tokens, and any difference outside that allowlist fails the suite mechanically, so the two files cannot diverge in ways a reviewer has to catch by eye.
+
+  The allowlist, amended 2026-09-01 when `0001_init` was written:
+
+  | Postgres | SQLite | Why it has to differ |
+  |---|---|---|
+  | `BIGSERIAL` | `INTEGER` | the original finding; SQLite writes NULL ids for `BIGSERIAL` |
+  | `DEFAULT now()` | `DEFAULT CURRENT_TIMESTAMP` | `now()` is a syntax error on SQLite, so the migration cannot apply at all |
+  | `JSONB` | `TEXT` | SQLite accepts the `JSONB` token and stores TEXT affinity; `typeof()` reports `text` |
+  | `TEXT[]` | `TEXT` | SQLite has no array type and accepts `TEXT[]` as a plain text column |
+
+  This consequence originally read "differ only in id column type declarations", which was wrong. Writing the first migration found four divergences rather than one, and two of them, `JSONB` and `TEXT[]`, are the same hazard as `BIGSERIAL`: SQLite accepts the token without complaint and gives back something else. The understatement made the decision look narrower than it is. The per-driver split is more load-bearing than this ADR first claimed, not less.
 - Every id column carries `NOT NULL` on both drivers. If a future migration is written with the wrong dialect for its directory, SQLite fails the insert loudly instead of accepting nulls, which converts this ADR's failure mode from silent corruption into a stop.
 - Both drivers keep an autoincrementing signed 64-bit primary key, so ADR-021's string serialization on the wire is unchanged and correct on both.
 - The five tracked documents that present SQLite as supported all remain accurate: `.env.example`, `.agent/glossary.md`, `.agent/context.md`, `docs/requirements.md`, and `docs/roadmap-product.md`. This decision amends none of them.
