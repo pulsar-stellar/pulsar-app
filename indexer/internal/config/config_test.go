@@ -277,6 +277,97 @@ func TestLoadReturnsTheZeroConfigOnError(t *testing.T) {
 	}
 }
 
+func TestLoadLeavesPoolBoundsUnsetByDefault(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := loadWith(t, nil)
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+
+	// Zero means the operator set nothing, and internal/db supplies the
+	// engine's default. It is not a pool of size zero.
+	if cfg.DBPoolMax != 0 || cfg.DBPoolMin != 0 {
+		t.Errorf("pool bounds = (%d, %d), want (0, 0) meaning unset", cfg.DBPoolMax, cfg.DBPoolMin)
+	}
+	if cfg.DBAllowInsecureTLS {
+		t.Error("DBAllowInsecureTLS defaulted to true, want false")
+	}
+}
+
+func TestLoadReadsPoolBounds(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := loadWith(t, func(env map[string]string) {
+		env["PULSAR_INDEXER_DB_POOL_MAX"] = "25"
+		env["PULSAR_INDEXER_DB_POOL_MIN"] = "5"
+	})
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if cfg.DBPoolMax != 25 || cfg.DBPoolMin != 5 {
+		t.Errorf("pool bounds = (%d, %d), want (25, 5)", cfg.DBPoolMax, cfg.DBPoolMin)
+	}
+}
+
+func TestLoadRejectsUnusablePoolBounds(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct{ name, value string }{
+		{"PULSAR_INDEXER_DB_POOL_MAX", "0"},
+		{"PULSAR_INDEXER_DB_POOL_MAX", "-1"},
+		{"PULSAR_INDEXER_DB_POOL_MAX", "ten"},
+		{"PULSAR_INDEXER_DB_POOL_MIN", "0"},
+		{"PULSAR_INDEXER_DB_POOL_MIN", "-1"},
+		{"PULSAR_INDEXER_DB_POOL_MIN", "two"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name+"="+c.value, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadWith(t, func(env map[string]string) { env[c.name] = c.value })
+			assertErrorNaming(t, err, c.name)
+		})
+	}
+}
+
+// ADR-031: this flag permits a Postgres DSN that can fall back to plaintext,
+// so an unparseable value must fail rather than resolve to either extreme.
+func TestLoadParsesAllowInsecureTLS(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		value string
+		want  bool
+	}{
+		{"true", true}, {"TRUE", true}, {"1", true}, {"t", true},
+		{"false", false}, {"FALSE", false}, {"0", false}, {"f", false},
+	} {
+		t.Run(c.value, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := loadWith(t, func(env map[string]string) {
+				env["PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS"] = c.value
+			})
+			if err != nil {
+				t.Fatalf("Load with %q: unexpected error: %v", c.value, err)
+			}
+			if cfg.DBAllowInsecureTLS != c.want {
+				t.Errorf("DBAllowInsecureTLS = %v, want %v", cfg.DBAllowInsecureTLS, c.want)
+			}
+		})
+	}
+
+	for _, value := range []string{"yes", "no", "on", "maybe"} {
+		t.Run("invalid/"+value, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadWith(t, func(env map[string]string) {
+				env["PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS"] = value
+			})
+			assertErrorNaming(t, err, "PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS")
+		})
+	}
+}
+
 func assertErrorNaming(t *testing.T, err error, name string) {
 	t.Helper()
 	if err == nil {

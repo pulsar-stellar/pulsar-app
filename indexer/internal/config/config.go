@@ -33,6 +33,16 @@ type Config struct {
 	DBDriver string
 	DBURL    string
 
+	// DBPoolMax and DBPoolMin are zero when the operator did not set them,
+	// which means the driver's own default applies. internal/db owns those
+	// defaults because they differ per engine.
+	DBPoolMax int
+	DBPoolMin int
+
+	// DBAllowInsecureTLS permits a Postgres DSN that can fall back to an
+	// unencrypted connection. Local use only. See ADR-031.
+	DBAllowInsecureTLS bool
+
 	RPCURL  string
 	Network string
 
@@ -84,6 +94,24 @@ func Load(getenv Getenv) (Config, error) {
 		return Config{}, err
 	}
 	cfg.DBURL = dbURL
+
+	poolMax, err := optionalPositiveInt(getenv, "PULSAR_INDEXER_DB_POOL_MAX")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DBPoolMax = poolMax
+
+	poolMin, err := optionalPositiveInt(getenv, "PULSAR_INDEXER_DB_POOL_MIN")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DBPoolMin = poolMin
+
+	allowInsecure, err := boolean(getenv, "PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS", false)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DBAllowInsecureTLS = allowInsecure
 
 	rpcURL, err := required(getenv, "PULSAR_INDEXER_RPC_URL")
 	if err != nil {
@@ -180,6 +208,28 @@ func positiveInt(getenv Getenv, name string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s is %d, but it must be greater than zero", name, n)
 	}
 	return n, nil
+}
+
+// optionalPositiveInt reads a variable that may be unset. Unset returns zero,
+// which callers read as "no override". A value that is set must still be a
+// positive whole number, so a typo is an error rather than a silent default.
+func optionalPositiveInt(getenv Getenv, name string) (int, error) {
+	if strings.TrimSpace(getenv(name)) == "" {
+		return 0, nil
+	}
+	return positiveInt(getenv, name, 0)
+}
+
+func boolean(getenv Getenv, name string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s is %q, which is not a boolean; use true or false", name, raw)
+	}
+	return v, nil
 }
 
 // contractList parses a comma-separated list of contract IDs. The list is
