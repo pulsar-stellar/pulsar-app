@@ -938,3 +938,56 @@ The required preparation step is documented on the function itself, with the ful
 - A caller fetches an account once and builds as many calls from it as they like, all claiming the same sequence number, which is what someone building a batch actually wants.
 - Preparation is the caller's step and is visible in the function's own documentation.
 - The argument check belongs to this SDK because the underlying one does not make it.
+
+---
+
+## ADR-028: Live testnet RPC verification, and the seven facts the indexer has to encode
+Date: 2026-09-01
+Status: accepted
+
+### Context
+
+Phase D writes Go code that talks to Soroban RPC directly. Every assumption that code makes about `getEvents` becomes a bug the moment it is wrong, and four existing ADRs (022, 024, 025, 026) were recorded from a single RPC call made during Sprint 2. A verification pass against live testnet ran before any indexer code was written, and it was repeated on 2026-09-01 because the retention window had moved since.
+
+Both passes queried `https://soroban-testnet.stellar.org`. The 2026-09-01 pass ran against protocol 28, RPC `28.0.1`, ledger 4446467, retention window 120960 ledgers.
+
+### Decision
+
+The four Sprint 2 ADRs stand as written. Seven further facts are recorded here, and the indexer is written against them.
+
+**ADR-022 held.** One six-event page from ledger 4430000 returned six distinct `txHash` values with `transactionIndex` and `operationIndex` at zero on all six, and the event ordinal incrementing 0 through 5 across those six transactions. `UNIQUE (tx_hash, event_index)` would have collided on the first page of the first ledger anyone indexed. `UNIQUE (ledger, event_index)` is correct.
+
+**ADR-024 held.** Event ids are stable per event across repeated calls and sort lexicographically in emission order, because both components are zero-padded fixed width.
+
+**ADR-025 held.** `cursor` was present and non-null on every response, including on a page that matched nothing.
+
+**ADR-026 held.** `inSuccessfulContractCall` was `false` on two of the six events in that page. Reverted calls are not rare enough to treat as an edge case, and an indexer that drops the flag reports failed calls as history.
+
+**The field is `topic`, singular.** Not `topics`. The event body carries `topic` as an array of base64 XDR strings and `value` as a single base64 XDR string. A Go struct tagged `topics` decodes to an empty slice with no error.
+
+**JSON-RPC errors arrive as HTTP 200.** A bad method, an over-cap limit, and an out-of-range `startLedger` all returned status 200 with no `result` field and an `error` object carrying `code` and `message`. The client branches on the presence of `error`, never on the status code.
+
+**`getEvents` caps `limit` at 10000.** A limit of 10000 returned 10000 events; 10001 returned `-32602`, "limit must not exceed 10000".
+
+**The retention floor moves between calls.** One response reported `oldestLedger: 4325510`; a call moments later rejected `startLedger: 4325510` with `-32600` and "startLedger must be within the ledger range: 4325514 - 4446473". A cached floor is stale as soon as it is read. Backfill re-reads the window on `-32600` rather than trusting the floor it started from.
+
+**An empty page still carries a cursor, and it is not an event id.** The zero-match query returned `cursor: "0019097481887350783-4294967295"`, whose ordinal is uint32 max: a synthetic end-of-window marker, not any event's identifier. A tail loop cannot use cursor presence or cursor change as a has-more signal. It checks the length of `events`.
+
+**The showcase contract has emitted nothing inside the current retention window.** `CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L` returned zero events across the full window on both passes. Live RPC cannot serve as a decoder fixture for it today. Decoder tests use recorded fixtures, or a fresh invocation made as part of the test run.
+
+### Alternatives considered
+
+**Trust the Sprint 2 findings without re-probing.** Rejected. The retention window had rolled over entirely between the two passes, and the finding about the moving floor is one that only a second call can surface.
+
+**Treat the reverted-call flag as an edge case and filter those events out at ingest.** Rejected. It is the indexer deciding what history a consumer is allowed to see, and ADR-026 already settled that the flag travels with the event.
+
+**Cache the retention floor per backfill run.** Rejected on the evidence above. The floor moved four ledgers inside one probe sequence.
+
+### Consequences
+
+- The Go RPC client decodes `topic`, and a test asserts the field name rather than only the decoded shape.
+- The client's error path keys on the `error` field. A 200 with an error body is a failure, and a transport-level non-200 is a separate failure.
+- Page size is clamped to 10000 at the config boundary, so an operator cannot set a limit the server will reject on every call.
+- Backfill handles `-32600` by re-reading the current window and resuming from the new floor, and it records that it skipped ledgers rather than failing.
+- The tail loop terminates a page walk on an empty `events` array, not on the cursor.
+- Decoder fixtures are recorded files under version control. The showcase contract is not a live test dependency.
