@@ -274,6 +274,43 @@ nobody verified.
 The general shape: a partial warning is read as a complete one. This is the
 documentation form of a test that passes by observing nothing.
 
+## An outage must not arrive as a 404
+
+A method with both a "not found" return and an error return has two ways to say
+no, and only one of them is true when the database is down. If a failing query
+falls into the not-found path, an outage reaches the caller as a clean 404: the
+API answers confidently that the row does not exist, monitoring sees successful
+responses, and nothing anywhere records that the database was unreachable.
+
+The check is cheap. Put the handle into an infrastructure-failure state, the
+easiest being a connection with no tables at all, then call every method and
+assert two things: each returns an error, and none of them satisfies
+`errors.Is(err, ErrNotFound)`. Step 54 does this across Register, Get, List,
+Delete, SetProgress and SetStatus in one table-driven test.
+
+It is worth writing even when the code obviously distinguishes the two, because
+the failure mode is a `sql.ErrNoRows` check placed one line too broadly, which
+looks correct in review. The test also happens to cover the error-wrapping
+branches that a healthy database never reaches.
+
+## A bind the driver will not scan back is a write bug
+
+When a driver accepts a value on the way in and cannot return it on the way out,
+the error surfaces on the read and the defect is on the write. Fixing the reader
+to tolerate whatever came back preserves the bad value in the database and moves
+the problem to everything else that ever reads that column.
+
+SQLite accepts a `time.Time` bound to a parameter, stores Go's `String()` output,
+`2026-09-01 15:29:26 +0000 UTC`, and reports no error. The scan then fails. The
+fix is to stop binding `time.Time`, per ADR-032, not to teach the scanner that
+format. Same shape as `BIGSERIAL` in ADR-029, where SQLite accepted the column
+type and wrote NULL ids: in both cases the write succeeded, said nothing, and
+left the wrong bytes on disk.
+
+So when a scan fails against a value this codebase wrote, check what the write
+actually stored before changing the reader. If the stored bytes are not what the
+writer intended, the reader is not the bug.
+
 ## Where the two kinds of test live
 
 - `tests/*.test.ts` runs by default and must not touch the network.
