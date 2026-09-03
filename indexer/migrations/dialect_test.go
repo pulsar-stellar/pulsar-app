@@ -20,7 +20,6 @@ var allowedSubstitutions = []struct {
 	{"BIGSERIAL", "INTEGER", "SQLite accepts BIGSERIAL and then writes NULL into every id"},
 	{"now()", "CURRENT_TIMESTAMP", "now() is a syntax error on SQLite, so the migration cannot apply"},
 	{"JSONB", "TEXT", "SQLite has no JSONB; it accepts the token and stores TEXT affinity"},
-	{"TEXT[]", "TEXT", "SQLite has no array type; it accepts TEXT[] as a plain text column"},
 	{"USING GIN (topics_json)", "(topics_json)",
 		"SQLite has no GIN and cannot index JSON containment at all; it gets a plain index that serves ordering but not topic_contains"},
 }

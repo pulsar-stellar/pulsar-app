@@ -22,6 +22,13 @@ CREATE TABLE contracts (
 -- topics_json and data_json are JSONB here and TEXT on SQLite. Any query using
 -- a Postgres JSON operator such as data_json->>'from' has no SQLite equivalent
 -- and must branch per driver, the same way this file does.
+--
+-- raw_topics is TEXT holding a JSON array on both engines, not TEXT[]. Through
+-- database/sql, pgx returns a text[] column as the Postgres array literal
+-- string rather than a []string, because stdlib's Rows.Next has no case for
+-- that OID and falls through to scanning a string. Nothing queries this column
+-- as an array, so the native type bought no capability and cost a divergence
+-- the driver could not bridge.
 CREATE TABLE events (
     id          BIGSERIAL NOT NULL PRIMARY KEY,
     contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
@@ -31,7 +38,7 @@ CREATE TABLE events (
     name        TEXT NOT NULL,
     topics_json JSONB NOT NULL,
     data_json   JSONB NOT NULL,
-    raw_topics  TEXT[] NOT NULL,
+    raw_topics  TEXT NOT NULL,
     raw_data    TEXT NOT NULL,
     emitted_at  TIMESTAMPTZ NOT NULL,
     UNIQUE (ledger, event_index)
