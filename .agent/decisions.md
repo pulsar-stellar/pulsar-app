@@ -1189,3 +1189,54 @@ The models keep `time.Time`. The divergence is a persistence detail and does not
 - `events.emitted_at` is the first column this actually protects, at step 55, since `contracts.added_at` is never bound.
 - The helper's Postgres branch, accepting a `time.Time` unchanged, is the one path that cannot be exercised here. It is covered by the same gap already recorded for the Postgres migration path.
 - If the model fields later become a custom type, this decision is what that change supersedes.
+
+---
+
+## ADR-033: The indexer decodes XDR with go-stellar-sdk, and never renders a timepoint with String()
+Date: 2026-09-01
+Status: accepted
+
+### Context
+
+Section 3.3 pins `github.com/stellar/go` at "Latest" for the decoder's XDR handling. Installing it prints a deprecation notice:
+
+```
+go: module github.com/stellar/go is deprecated: Use github.com/stellar/go-stellar-sdk instead
+```
+
+The replacement carries the same `xdr` package with all 22 `ScVal` variants, and ships as `v0.7.3` where the deprecated module resolves only to `v0.0.0-20251210100531-aab2ea4aca88`. ADR-015 pins dependencies to exact versions; a pseudo-version derived from a commit timestamp is the weakest form of that, and a real semver is what the discipline wants.
+
+CLAUDE.md requires verifying an external API before writing against it, which is the rule that produced ADR-013 and ADR-027 in Sprint 2. Doing that here found one behaviour that would have shipped as a defect.
+
+### Decision
+
+`indexer/go.mod` depends on `github.com/stellar/go-stellar-sdk v0.7.3`. Section 3.3's row is stale and marked as such.
+
+The decoder reads every value through the typed accessor for its variant. It does not call `ScVal.String()`, with no exception made for the integer types where that method happens to be correct.
+
+### What verification found
+
+**`String()` is exact for every integer width.** Checked `i128` across its full range against `math/big`: 100, 2^64, 2^64+5, max int128, -1, -2^64, and min int128 all match the arbitrary-precision result exactly, including the negatives. `u128`, `i256` and `u64` at max are correct too. The decimal-string conversion section 7.4 asks for needs no hand-rolled 128-bit arithmetic.
+
+**`String()` on a `timepoint` returns a formatted local date.** A `TimePoint(1788255912)` renders as `"2026-09-01 10:45:12 +0100 WAT"`, carrying the machine's timezone into the value. ADR-023 specifies `timepoint` as an unsigned 64-bit second count carried as a string, so the correct value is `"1788255912"`, which is what the raw accessor gives. `duration` is unaffected and renders as `"3600"`, which is why a decoder written against `duration` alone and generalised to `timepoint` would have looked right.
+
+This is the reason the decoder uses typed accessors uniformly rather than reaching for `String()` where it works. A per-variant exception list is a thing to get wrong later, and this method is already wrong for one of the two variants that look interchangeable.
+
+**Every variant re-marshals byte-identically.** `MarshalBase64` on a value parsed from the wire reproduces the input exactly, for ordinary values and for `error`, `contractInstance`, `ledgerKeyNonce` and `ledgerKeyContractInstance`. So ADR-023's `unknown` fallback can reproduce the original base64 from the parsed value and does not need the input string carried alongside it.
+
+**`address` decodes account addresses, not only contract ids.** The `ScvAddress` from testnet ledger 4430000 decodes to `GAB62KEKMKHDOMF3256P4CS7FCWRDUPT7M2CLD4JGKFWCA2H3DW3NRRB`, a `G` account. ADR-023 recorded this from the TypeScript side; it holds on the Go side too.
+
+**A panic seen during verification was not a library defect.** Constructing an `ScError` with `Type: SceContract` and the `Code` arm set, rather than `ContractCode`, produces a nil dereference inside `EncodeTo`. `ScError` is itself a union and the arms are not interchangeable. Values parsed from the wire are well formed and render without incident. Recorded because the stack trace points into generated library code and looks like an upstream bug.
+
+### Alternatives considered
+
+**Stay on `github.com/stellar/go`.** Rejected. It still builds, but it pins a deprecated module by commit timestamp, and the cost of moving only grows as more of the indexer depends on it.
+
+**Use `ScVal.String()` for the integer variants and typed accessors elsewhere.** Rejected. It is correct today for `i128`, `u128`, `i256` and `u64`, and wrong for `timepoint`, which sits beside `duration` in the same conceptual group. A rule with an exception list is one someone extends wrongly later.
+
+### Consequences
+
+- The decoder imports `github.com/stellar/go-stellar-sdk/xdr`. Section 3.3's dependency row is superseded by this ADR.
+- `timepoint` and `duration` are read from their raw 64-bit values and formatted as decimal strings, never through `String()`.
+- The `unknown` fallback re-marshals the parsed value rather than threading the original base64 through the decoder.
+- Any later code touching `xdr.ScVal` inherits the no-`String()` rule. A reviewer seeing that call in this repository should treat it as a defect.
