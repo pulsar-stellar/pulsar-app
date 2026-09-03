@@ -414,8 +414,10 @@ func TestAddedAtReachesTheWireAsRFC3339(t *testing.T) {
 // Every method has to surface a database failure as a wrapped error naming
 // this package, rather than swallowing it or returning a zero value that reads
 // as success. An unmigrated handle makes every statement fail at once.
-func TestEveryMethodWrapsADatabaseFailure(t *testing.T) {
-	t.Parallel()
+// unmigrated opens a database with no tables at all, which is the cheapest
+// infrastructure-failure state to put every method into at once.
+func unmigrated(t *testing.T) *sql.DB {
+	t.Helper()
 
 	driver, err := db.Resolve(db.Options{DriverName: "sqlite"})
 	if err != nil {
@@ -425,9 +427,14 @@ func TestEveryMethodWrapsADatabaseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer func() { _ = handle.Close() }()
+	t.Cleanup(func() { _ = handle.Close() })
+	return handle
+}
 
-	// Deliberately not migrated: there is no contracts table.
+func TestEveryMethodWrapsADatabaseFailure(t *testing.T) {
+	t.Parallel()
+
+	handle := unmigrated(t)
 	contracts := store.NewContracts(handle)
 	ctx := context.Background()
 
