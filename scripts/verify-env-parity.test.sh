@@ -157,6 +157,44 @@ func Load(getenv func(string) string) string {
 EOF
 run_sandbox "helper calls inside comments are not references" 0
 
+# Test files are not deployment config. A variable read only by a *_test.go file
+# is a test gate, such as a network-test opt-in, not something a deployer sets,
+# so it must not be demanded of .env.example. The production main.go here reads a
+# declared variable, so the scanner still runs full parity rather than taking its
+# empty-input early exit; the pass therefore proves the test-only gate was
+# excluded, not that the scan found nothing. Drop the exclusion and this flips to
+# exit 1, which is the regression the case exists to catch.
+reset_sandbox
+cat > "$sandbox/indexer/main.go" <<'EOF'
+package main
+
+import "os"
+
+func main() { _ = os.Getenv("PULSAR_INDEXER_RPC_URL") }
+EOF
+cat > "$sandbox/indexer/client_test.go" <<'EOF'
+package main
+
+import "os"
+
+// gate stands in for a network-test opt-in; the scanner must ignore it.
+func gate() { _ = os.Getenv("PULSAR_INDEXER_TEST_ONLY_GATE") }
+EOF
+run_sandbox "a _test.go gate variable is not required in .env.example" 0
+
+# The TypeScript half needs the same guarantee, or a gated *.test.ts would trip
+# the check the way a *_test.go would. Same shape: a declared var in production
+# code, an undeclared gate in the test file, expected to pass only because the
+# test file is excluded.
+reset_sandbox
+cat > "$sandbox/packages/client.ts" <<'EOF'
+export const url = process.env.NEXT_PUBLIC_PULSAR_INDEXER_URL;
+EOF
+cat > "$sandbox/packages/client.test.ts" <<'EOF'
+export const gate = process.env.PULSAR_TS_TEST_ONLY_GATE;
+EOF
+run_sandbox "a .test.ts gate variable is not required in .env.example" 0
+
 # Sources present, no lookups in them. The script passes here by design, and
 # pinning it means a future change to that branch is a deliberate one.
 reset_sandbox

@@ -6,6 +6,12 @@
 # name it finds is missing from .env.example. A variable that exists only in the
 # example file is fine: defaults may be declared ahead of the code that reads
 # them.
+#
+# Test files are not scanned. .env.example is the deployment-config template, so
+# a variable read only by a test, such as a network-test opt-in gate, is not
+# something a deployer sets and must not be demanded here. Any real config a test
+# reads is also read by the code under test, which is scanned, so excluding tests
+# cannot hide a live variable.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -50,6 +56,9 @@ referenced="$(
   grep -rhE "$pattern" \
     "${search_paths[@]}" \
     --include='*.ts' --include='*.tsx' --include='*.go' \
+    --exclude='*_test.go' \
+    --exclude='*.test.ts' --exclude='*.test.tsx' \
+    --exclude='*.spec.ts' --exclude='*.spec.tsx' \
     --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=dist \
     2>/dev/null \
   | sed 's://.*::' \
