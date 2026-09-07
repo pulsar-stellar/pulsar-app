@@ -1240,3 +1240,93 @@ This is the reason the decoder uses typed accessors uniformly rather than reachi
 - `timepoint` and `duration` are read from their raw 64-bit values and formatted as decimal strings, never through `String()`.
 - The `unknown` fallback re-marshals the parsed value rather than threading the original base64 through the decoder.
 - Any later code touching `xdr.ScVal` inherits the no-`String()` rule. A reviewer seeing that call in this repository should treat it as a defect.
+
+---
+
+## ADR-034: The indexer classifies the retention-floor rejection by JSON-RPC code, not message text
+Date: 2026-09-07
+Status: accepted
+
+### Context
+
+ADR-028 finding #2 recorded that Soroban RPC returns JSON-RPC errors as HTTP 200 with an error object and no result field, and finding #4 that the retention floor (`oldestLedger`) moves between calls, so a `startLedger` valid on one poll can fall below the floor on the next. The poller has to recognise that one rejection to re-read the floor and retry once (§7.3), and must not confuse it with any other failure.
+
+The node returns JSON-RPC code `-32600` for a `startLedger` below the retention floor. Verified against testnet on 2026-09-07: a `getEvents` with `StartLedger: 1000` returns `-32600` through `go-stellar-sdk`'s `rpcclient`. `-32600` is JSON-RPC's generic "Invalid Request" code, which Soroban overloads for the out-of-range case rather than minting a dedicated one.
+
+The SDK's transport is `github.com/creachadair/jrpc2`. Its `filterError` converts only the `Cancelled` and `DeadlineExceeded` codes into context errors and passes every other code, `-32600` included, through as a `*jrpc2.Error` carrying the numeric `Code`. `jrpc2.ErrorCode(err)` walks the wrap chain with `errors.As` and returns that code, so it survives the `fmt.Errorf("...: %w", err)` wrapping this package adds on every method.
+
+The first push of step 59a classified this by matching message text (`strings.Contains(msg, "-32600") && strings.Contains(msg, "ledger")`). That commit was rewritten into the code check before this ADR was recorded.
+
+### Decision
+
+`internal/rpc.IsRangeError` reports the retention-floor rejection by comparing the JSON-RPC code, `jrpc2.ErrorCode(err) == rangeErrorCode` where `rangeErrorCode jrpc2.Code = -32600`, and nothing else. The overload is documented at the constant.
+
+Because the classifier reads the code through the wrap chain, every method in the package wraps its errors with `%w`, and the poller keys its retry solely on `IsRangeError`. `jrpc2` is promoted to a direct dependency of `indexer/go.mod`, since the package now names its type.
+
+### Alternatives considered
+
+**Match the error message text.** Rejected, and this is the rewrite that produced this ADR. The wording is not part of any contract, is not covered by the SDK's or the node's semver, and can change without notice; a substring match also couples the indexer to English phrasing. Replaced with the code check.
+
+**A `Result() (T, error)` gate on a response wrapper**, as ADR-028 finding #2 first suggested. Rejected. The hazard finding #2 describes, reading result data without seeing the error, does not exist at this boundary: `rpcclient` already returns `(T, error)` with a zero result on error, so no caller can reach the payload without the error in hand. A wrapper would enforce an ordering the SDK already enforces. The finding lands instead as this typed classifier.
+
+### Consequences
+
+- The poller distinguishes the retention-floor rejection from every other RPC failure by code, and retries once with a freshly read floor only for `-32600` (ADR-028 finding #4). Any other error propagates.
+- `-32600` is a generic code Soroban overloads. If a future node build returns it for a genuinely malformed request, the poller spends one wasted floor re-read and retry before the failure surfaces, which is a bounded cost and is why the retry is capped at one.
+- A network-gated test (`PULSAR_TEST_LIVE_RPC`) pins the empirical fact that a real testnet `-32600` reaches `IsRangeError` through the wrap. CI does not run it; it is the counterpart to the synthetic table test.
+- `IsRangeError(nil)` is false, since `jrpc2.ErrorCode(nil)` is `jrpc2.NoError`.
+- Any later code that must recognise another JSON-RPC code follows this shape rather than reaching for the message.
+
+---
+
+## ADR-035: The indexer populates in_successful_contract_call from the deprecated RPC field, with a committed fallback
+Date: 2026-09-07
+Status: accepted
+
+### Context
+
+ADR-026 made `in_successful_contract_call` a required column on the events table (§7.1) and a required field on `DecodedEvent` and `models.Event`, populated from the wire, and settled that the indexer stores the flag rather than filtering on it: "Consumers choose their own filtering. The SDK reports what the ledger holds." Filtering failed-call events on the RPC path was rejected there as silent data loss. So the poller's job for this field is to carry it from the RPC response onto every stored event, faithfully.
+
+The field it reads is `protocol.EventInfo.InSuccessfulContractCall`. In `go-stellar-sdk v0.7.3` it carries a deprecation notice, verified in the SDK source:
+
+```
+// Deprecated: remove in v24
+InSuccessfulContractCall bool `json:"inSuccessfulContractCall"`
+```
+
+Verified against live testnet on 2026-09-07: the field is present and populated `true` on all three showcase-contract fixtures currently within retention. So today this is a pre-announced removal, not a field that has begun arriving empty. The hazard is specific to how it is used. `InSuccessfulContractCall` is a Go `bool`, and its zero value is `false`. If the SDK removes the field or the node stops sending it, the JSON omits `inSuccessfulContractCall` and the struct field decodes to `false` with no error. The indexer would then write `false` for every event, marking committed events as reverted, and nothing would report it. That is the ADR-032 and ADR-029 failure shape again: the driver accepts what it is given, reports success, and the wrong value surfaces downstream, here as a consumer under-counting real events.
+
+### Decision
+
+While `go-stellar-sdk` populates the field, the poller sets `models.Event.InSuccessfulContractCall` directly from `EventInfo.InSuccessfulContractCall` and stores it on every event. It does not filter on the flag; ADR-026 governs that.
+
+The fallback for the field's removal, recorded now so it does not have to be re-derived under pressure, derives the same fact from the transaction's status:
+
+- For each event, take `EventInfo.TransactionHash` (JSON `txHash`).
+- Call `GetTransaction(ctx, protocol.GetTransactionRequest{Hash: txHash})`. The returned `protocol.GetTransactionResponse` carries `Status` (promoted from the embedded `TransactionDetails`), one of `protocol.TransactionStatusSuccess` ("SUCCESS"), `protocol.TransactionStatusFailed` ("FAILED"), or `protocol.TransactionStatusNotFound` ("NOT_FOUND").
+- Store `Status == protocol.TransactionStatusSuccess` as the value of `in_successful_contract_call`. A `NOT_FOUND` is not a success and must not be written as one; it means the lookup itself failed, and is a decode-time error to log and skip, not a silent `false`.
+- Dedupe by `txHash` within a poll batch: many events share one transaction, and `GetTransaction` is a per-hash round trip, so resolve each hash once per batch.
+
+Implementing the fallback adds `GetTransaction` to the package's `Caller` interface and to `Client`; `rpcclient.Client` already exposes it as `GetTransaction(ctx, protocol.GetTransactionRequest) (protocol.GetTransactionResponse, error)`.
+
+### Trigger
+
+Switch from the field to the fallback before upgrading past the `go-stellar-sdk` version that removes `InSuccessfulContractCall`, or immediately if it starts arriving empty on live data, whichever comes first.
+
+The notice reads only `remove in v24` and does not say whether `v24` is a `go-stellar-sdk` release or a Stellar RPC release; the SDK is at `v0.7.3` today, so the number most plausibly refers to the RPC. That ambiguity is why the "arrives empty on live data" half is the reliable signal: re-run the live-fixture check that confirmed population on 2026-09-07, and treat a poll cycle that writes `false` across events known to have committed as the symptom. The version half is the scheduled reminder to check before any major SDK bump.
+
+### Alternatives considered
+
+**Read the field until it breaks, with no recorded fallback.** Rejected. The removal is announced, and because the field is a `bool` that decodes to `false` on absence, the break is silent: the column fills with `false` and consumers under-count. A field whose failure mode is quiet corruption is one to plan the exit for while it still works.
+
+**Switch to the `GetTransaction` fallback now, pre-emptively.** Rejected for now. It adds a per-transaction round trip to every poll while the field is still populated and authoritative, and the extra RPC load buys nothing until the field is gone. The trigger is the point where that cost becomes worth paying.
+
+**Derive success from the event `type` alone.** Rejected. `type` distinguishes `contract`, `system`, and `diagnostic` events, not whether the emitting call committed; a `contract` event can come from a reverted call, which is the exact case ADR-026 cites from live testnet. It is not a substitute.
+
+### Consequences
+
+- Today, no behaviour change and no new RPC load: the poller copies the field onto every event, and the stored `in_successful_contract_call` is what the ledger reported.
+- The fallback is specified to the field, method, and constant level, so implementing it later is a mechanical change plus a `Caller` extension, not a re-investigation.
+- When the fallback lands it costs one `GetTransaction` per distinct `txHash` per poll batch; the dedupe bound is what keeps that from being one call per event.
+- A `go-stellar-sdk` major upgrade must check this ADR. A reviewer bumping that dependency should treat an untriggered ADR-035 as a release blocker, because the failure is silent.
+- This decision sits under ADR-026: it is about the value written to `in_successful_contract_call`, never about dropping events.
