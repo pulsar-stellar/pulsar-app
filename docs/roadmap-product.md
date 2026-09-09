@@ -782,6 +782,7 @@ Every meaningful update to this document lands here as a one-liner with the date
 
 - **YYYY-MM-DD**: Initial roadmap drafted, before any code.
 - **YYYY-MM-DD**: Split pulsar-core execution into three sprints (Sprints 1-3) matching the natural break points in Phase 6's build sequence. Renumbered pulsar-app sprints from 2-6 to 4-8, and downstream sprints accordingly.
+- **2026-09-09**: Added [`docs/roadmap-hardening.md`](./roadmap-hardening.md), a focused epic sitting under this master roadmap. It restates the remaining indexer serving path and the hardening/deployment/submission layer (Sprints 8-10 here) as eight ordered workstreams in GrantFox epic form, each with explicit acceptance criteria and a testing plan. This roadmap stays authoritative for sprint numbering and the milestone track; the epic adds the how and the done-criteria. Adoption recorded as ADR-037.
 
 Update this changelog whenever a sprint completes, a milestone shifts, or a directional decision changes.
 

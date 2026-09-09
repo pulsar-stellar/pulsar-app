@@ -1378,3 +1378,44 @@ On the success path the poller reads `latestLedger` from the `GetEventsResponse`
 - A caught-up contract polls at the fixed interval and holds position on each high-side `-32600`, so `last_indexed_ledger` stays put until a new ledger actually carries events. No full-window re-scan, and no progress written past ledgers that were never fetched.
 - The high side is classified from `startLedger > latestLedger`, so a future protocol change that reused `-32600` for a third condition would fall through both branches and surface as an unclassified error rather than being silently mistaken for caught-up.
 - This extends ADR-028 finding #4 rather than replacing it: the low-side finding and its resume-from-floor rule stand exactly as recorded.
+
+---
+
+## ADR-037: A hardening-and-submission roadmap extends the product roadmap in GrantFox epic form
+
+Date: 2026-09-09
+Status: accepted
+
+### Context
+
+The maintainer asked for an extensive, strictly-structured roadmap covering the work beyond the core build sequence: finishing the indexer's HTTP surface, deploying the explorer and indexer, adding deployment to CI/CD, a comprehensive error-code system, richer coverage of Stellar payment event shapes, smart-contract gas optimization, boosting code quality to open-source standard, capacity to host many scoped contributor issues, and assembling a Drips Wave / GrantFox submission with every verifying link. The reference model given was Stellar-IndigoPay issue #1098 and its PR #1211, a `GrantFox OSS` epic that bundles fund-safety work into ordered workstreams, each with objective, problem, scope, implementation, acceptance criteria, and testing.
+
+Three items in the ask could have forked the project's identity and were resolved with the maintainer before drafting:
+
+- Payment systems. Pulsar is a read-only indexer and a recorded non-negotiable forbids it from submitting transactions or holding funds. Resolved to decoding payment event shapes (SEP-41, path payment, claimable balance, anchor flows) as first-class typed feeds, not operating a money path. This is the deliberate contrast with IndigoPay, which hardens a money path it owns.
+- "250 error codes." Resolved to a structured, documented, aligned error-code catalog in the epic template's shape, sized to the real failure surface, not a literal count to pad to. This generalizes ADR-034's code-not-text principle.
+- Gas optimization and benchmarking. This targets the Rust contracts in `pulsar-core`, a different repo not in this workspace. Resolved to record it as a cross-repo deliverable that lands in `pulsar-core`'s own roadmap and ADR log, not built app-side.
+
+### Decision
+
+Adopt a tracked document, `docs/roadmap-hardening.md`, as a focused epic sitting under the master `docs/roadmap-product.md`. It restates the remaining indexer build sequence and the hardening/submission layer as eight ordered workstreams (H1 through H8), each carrying the six-part structure the reference epic uses. It extends the product roadmap and the numbered build sequence rather than replacing either: sprint numbering, estimates, and the milestone track stay in `roadmap-product.md`, and this document does not renumber Phase 7's steps.
+
+Two rules govern the roadmap. Pulsar stays read-only: every workstream respects the no-submit, no-custody boundary, and payment systems appear only as shapes to decode. And the roadmap extends the tracked docs: directional decisions land as ADRs, and cross-repo items land in `docs/planning/cross-repo-updates.md` and then in the far repo's own docs.
+
+### Alternatives considered
+
+**Go back to the drawing board and replace the existing roadmap.** Rejected. The project already carries a comprehensive tracked roadmap through Sprint 11, a per-repo core roadmap, and 36 prior ADRs. Discarding that to restart would throw away recorded reasoning the repo's own rules say to build on, and would contradict `CLAUDE.md`'s instruction that a decision worth keeping moves into the ADR log rather than being re-derived.
+
+**Add a real payment/money path mirroring IndigoPay.** Rejected. It contradicts the read-only non-negotiable, introduces fund-safety risk to a tool that deliberately has none, and would be a multi-sprint architectural pivot away from the product's stated identity as an event indexer. Client-side, user-signed payment tooling with no custody is recorded instead as a future-horizon item with a trigger.
+
+**Define a literal 250 numbered error codes.** Rejected. A count target invites padding the surface with codes no path returns, which is the fabricated-completeness the authenticity rules forbid. A catalog sized to the real failure surface is the honest and useful form.
+
+**Keep the roadmap as an untracked planning draft.** Rejected. The ask is for a roadmap to be strictly followed, and `docs/planning/` is explicitly untracked and absent from a fresh clone. A roadmap meant to bind the work belongs in tracked `docs/` where a contributor and a reviewer can see it.
+
+### Consequences
+
+- `docs/roadmap-hardening.md` is the tracked plan for the finish-and-submit phase; work in that phase is checked against its per-workstream acceptance criteria.
+- The immediate next build step is unchanged: Workstream H1 is the remaining indexer serving path (HTTP surface, the rest of step 72, README), which was already the next block in the build sequence.
+- The gas-optimization, SEP-41-token-showcase, and error-code-alignment items are queued as cross-repo deliverables for `pulsar-core`; they are not app-repo work.
+- Deployment and secret-rotation work (Workstream H3) is high-risk under the safety rules: irreversible steps are confirmed with the maintainer before execution and the `security-review` skill is loaded for those commits.
+- This ADR is a directional decision, not a wire-contract or code change, so it carries no test; the roadmap it adopts carries the acceptance criteria instead.
