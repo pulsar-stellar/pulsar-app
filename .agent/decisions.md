@@ -1330,3 +1330,51 @@ The notice reads only `remove in v24` and does not say whether `v24` is a `go-st
 - When the fallback lands it costs one `GetTransaction` per distinct `txHash` per poll batch; the dedupe bound is what keeps that from being one call per event.
 - A `go-stellar-sdk` major upgrade must check this ADR. A reviewer bumping that dependency should treat an untriggered ADR-035 as a release blocker, because the failure is silent.
 - This decision sits under ADR-026: it is about the value written to `in_successful_contract_call`, never about dropping events.
+
+---
+
+## ADR-036: The poller tells the two -32600 cases apart by fresh window bounds, not message text
+
+Date: 2026-09-09
+Status: accepted
+
+### Context
+
+ADR-028 finding #4 recorded one cause of the JSON-RPC `-32600` error: a `startLedger` below the retention floor, the low side of the window. It prescribed re-reading the window and resuming from the new `oldestLedger`, and ADR-034 built `IsRangeError` to key on the numeric code alone, having rejected matching the message text.
+
+Finding #4 never probed the other side. A live testnet probe on 2026-09-09 (latest ledger 4586713, oldest 4465754) closed that gap:
+
+- `startLedger = 4586718` (latest + 5) returned `-32600`, `"startLedger must be within the ledger range: 4465754 - 4586713"`.
+- `startLedger = 5586713` (latest + 1000000) returned `-32600` with the same message structure.
+
+So `-32600` is overloaded: it is returned for a `startLedger` below `oldestLedger` and for one above `latestLedger`, with the same code and the same message shape. The high side is not an edge case. It is the steady state of a caught-up contract: once the poller drains to the tip, the next tick asks for `startLedger = LastIndexedLedger + 1`, which exceeds `latestLedger` until a new ledger closes. A caught-up indexer polling every 5 seconds meets `-32600` on the high side on most ticks.
+
+A poller that applied finding #4 literally to every `-32600`, resuming from `oldestLedger`, would re-scan the entire 120960-ledger retention window on every tick once caught up. That is the inverse of caught-up, and it would be the normal operating mode, not a rare fault.
+
+### Decision
+
+On `-32600`, the poller re-reads the current window with `getHealth` (no cached floor, per finding #4) and branches on the freshly read numeric bounds, never on the message text:
+
+- `startLedger < oldestLedger`: the low side. A backfill gap. Resume from `oldestLedger` and record the skipped ledger range. This is finding #4 unchanged.
+- `startLedger > latestLedger`: the high side, caught up. There are no events yet. Hold position: do not advance `last_indexed_ledger`, do not reset it, reset the backoff, and wait for the next tick. This is not an error to escalate or to back off on.
+
+The discriminator is `startLedger` compared against a freshly read `[oldestLedger, latestLedger]`, which is numeric classification against live bounds and is consistent with ADR-034's rule. The message text is read by no code path.
+
+On the success path the poller reads `latestLedger` from the `GetEventsResponse`, which carries it on every response, so the extra `getHealth` is made only on the `-32600` branch and not on every tick.
+
+### Alternatives considered
+
+**Match the message text to tell the two cases apart.** Rejected. ADR-034 rejected message-text matching for this exact error, and the wording is not part of any contract. The window bounds are already available numerically, so text parsing buys nothing and reintroduces the fragility ADR-034 removed.
+
+**Treat every -32600 as finding #4 prescribes and resume from oldestLedger.** Rejected on the probe evidence. It turns the caught-up steady state into a full-window re-scan every tick.
+
+**Pre-check `startLedger` against `latestLedger` before each call and skip the request when it is ahead.** Rejected for now. It needs a fresh `latestLedger` before every tick, which is the extra call this design avoids by reading `latestLedger` from the success response. The high-side `-32600` is cheap and self-correcting: one empty round trip that resolves the moment a new ledger closes. The pre-check is an optimisation to revisit only if that round trip ever proves costly.
+
+**Slow the tick down for a caught-up contract.** Rejected. Section 7.3 specifies a flat, configurable 5-second interval and no caught-up-specific cadence. A backoff-style slowdown on the high side would be a new knob the spec does not call for, and it would delay the first event after a quiet period by whatever the slowdown grew to. Holding position at the fixed interval is simpler and keeps tip latency bounded by the poll interval.
+
+### Consequences
+
+- `IsRangeError` stays a code-only check. The low/high split lives in the poller, which already has the fresh window bounds in hand from the `getHealth` re-read that finding #4 mandates.
+- A caught-up contract polls at the fixed interval and holds position on each high-side `-32600`, so `last_indexed_ledger` stays put until a new ledger actually carries events. No full-window re-scan, and no progress written past ledgers that were never fetched.
+- The high side is classified from `startLedger > latestLedger`, so a future protocol change that reused `-32600` for a third condition would fall through both branches and surface as an unclassified error rather than being silently mistaken for caught-up.
+- This extends ADR-028 finding #4 rather than replacing it: the low-side finding and its resume-from-floor rule stand exactly as recorded.
