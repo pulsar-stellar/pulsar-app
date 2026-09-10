@@ -88,6 +88,32 @@ func (c *Contracts) List(ctx context.Context) ([]models.Contract, error) {
 	return contracts, nil
 }
 
+// ContractStats is an aggregate snapshot of the contracts table for the health
+// endpoint: how many contracts are tracked and the highest ledger any of them
+// has been indexed to. Count includes every registered contract regardless of
+// status, since a paused or errored contract is still one the indexer knows
+// about. LatestLedger is 0 when no contract has been polled yet, reported as a
+// real zero rather than null.
+type ContractStats struct {
+	Count        int
+	LatestLedger int64
+}
+
+// Stats returns the aggregate the health endpoint reports. It is one row from a
+// single aggregate query rather than a count over a List result, so a health
+// probe stays cheap as the table grows. COALESCE turns the NULL that MAX yields
+// over an empty table into 0, which is a value the int64 scan can take.
+func (c *Contracts) Stats(ctx context.Context) (ContractStats, error) {
+	row := c.q.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(last_indexed_ledger), 0) FROM contracts`)
+
+	var stats ContractStats
+	if err := row.Scan(&stats.Count, &stats.LatestLedger); err != nil {
+		return ContractStats{}, fmt.Errorf("store: reading contract stats: %w", err)
+	}
+	return stats, nil
+}
+
 // Delete stops tracking a contract and removes its events, which the schema's
 // ON DELETE CASCADE handles. It returns ErrNotFound if there was nothing to
 // delete, so a caller can tell 204 from 404.

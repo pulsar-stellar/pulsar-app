@@ -501,3 +501,58 @@ func TestAStatusOutsideTheEnumSurvivesScanningAsIs(t *testing.T) {
 		t.Errorf("an unknown status was silently mapped onto %q", got.Status)
 	}
 }
+
+// On an empty table Stats reports zero contracts and a zero latest ledger,
+// which is the state the health endpoint sees before any contract is
+// registered. The MAX over no rows is NULL, and COALESCE has to turn that into
+// a real 0 rather than an error or a null the scan cannot take.
+func TestStatsOnEmptyTableIsZero(t *testing.T) {
+	t.Parallel()
+
+	contracts, _ := contractsStore(t)
+
+	got, err := contracts.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if got.Count != 0 {
+		t.Errorf("Count = %d, want 0 for an empty table", got.Count)
+	}
+	if got.LatestLedger != 0 {
+		t.Errorf("LatestLedger = %d, want 0 for an empty table", got.LatestLedger)
+	}
+}
+
+// Stats counts every registered contract regardless of tracking progress and
+// reports the highest last_indexed_ledger across them. A contract that has
+// never been polled sits at ledger 0 and still counts, so the count and the
+// high-water ledger move independently.
+func TestStatsCountsContractsAndReportsHighestLedger(t *testing.T) {
+	t.Parallel()
+
+	contracts, _ := contractsStore(t)
+	ctx := context.Background()
+
+	if _, err := contracts.Register(ctx, showcase); err != nil {
+		t.Fatalf("Register showcase: %v", err)
+	}
+	if _, err := contracts.Register(ctx, other); err != nil {
+		t.Fatalf("Register other: %v", err)
+	}
+	// showcase stays at ledger 0 (never polled); other advances to 42, so the
+	// high-water mark is other's and not the most recently registered row's.
+	if err := contracts.SetProgress(ctx, other, 42); err != nil {
+		t.Fatalf("SetProgress other: %v", err)
+	}
+
+	got, err := contracts.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats: %v", err)
+	}
+	if got.Count != 2 {
+		t.Errorf("Count = %d, want 2", got.Count)
+	}
+	if got.LatestLedger != 42 {
+		t.Errorf("LatestLedger = %d, want 42 (the highest across contracts)", got.LatestLedger)
+	}
+}
