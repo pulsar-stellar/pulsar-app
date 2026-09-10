@@ -44,6 +44,11 @@ type Code string
 // server-side and never sent, so the message stays generic.
 const CodeInternalPanic Code = "INTERNAL_PANIC"
 
+// CodeNotFoundRoute is returned when a request matches no route. It is the
+// router's not-found path, distinct from a request that reaches a handler and
+// finds the resource itself absent, which gets its own code.
+const CodeNotFoundRoute Code = "NOT_FOUND_ROUTE"
+
 // entry is a code's registered metadata: the wire class a consumer switches
 // on, the HTTP status the response carries, and the one-line meaning
 // docs/error-codes.md publishes.
@@ -60,6 +65,11 @@ var registry = map[Code]entry{
 		class:   ClassInternal,
 		status:  http.StatusInternalServerError,
 		meaning: "The indexer hit an unexpected condition and recovered. The failure is logged server-side; retrying may succeed.",
+	},
+	CodeNotFoundRoute: {
+		class:   ClassNotFound,
+		status:  http.StatusNotFound,
+		meaning: "No endpoint matches the request path.",
 	},
 }
 

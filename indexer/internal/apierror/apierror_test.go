@@ -101,6 +101,20 @@ func TestKnownCodeReportsItsRegisteredValues(t *testing.T) {
 	}
 }
 
+func TestNotFoundRouteMapsToNotFound404(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeNotFoundRoute.Class(); got != ClassNotFound {
+		t.Errorf("Class() = %q, want %q", got, ClassNotFound)
+	}
+	if got := CodeNotFoundRoute.Status(); got != http.StatusNotFound {
+		t.Errorf("Status() = %d, want %d", got, http.StatusNotFound)
+	}
+	if !CodeNotFoundRoute.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
 // An unregistered code must degrade to internal/500, never to an empty class
 // or a zero status, because either would reach the wire as something the SDK
 // cannot validate.

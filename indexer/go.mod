@@ -4,6 +4,7 @@ go 1.26.7
 
 require (
 	github.com/creachadair/jrpc2 v1.2.0
+	github.com/go-chi/chi/v5 v5.3.2
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/stellar/go-stellar-sdk v0.7.3
 	modernc.org/sqlite v1.57.0
