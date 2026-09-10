@@ -1419,3 +1419,52 @@ Two rules govern the roadmap. Pulsar stays read-only: every workstream respects 
 - The gas-optimization, SEP-41-token-showcase, and error-code-alignment items are queued as cross-repo deliverables for `pulsar-core`; they are not app-repo work.
 - Deployment and secret-rotation work (Workstream H3) is high-risk under the safety rules: irreversible steps are confirmed with the maintainer before execution and the `security-review` skill is loaded for those commits.
 - This ADR is a directional decision, not a wire-contract or code change, so it carries no test; the roadmap it adopts carries the acceptance criteria instead.
+
+---
+
+## ADR-038: The error-code catalog rides in error.details.code, not the wire error.code
+
+Date: 2026-09-10
+Status: accepted
+
+### Context
+
+Workstream H2 in `docs/roadmap-hardening.md` calls for a structured, documented, machine-readable error-code catalog: stable UPPER_SNAKE identifiers grouped by domain (`VALIDATION_*`, `NOT_FOUND_*`, `RANGE_*`, `RPC_*`, `STORE_*`, `DECODE_*`, `CONFIG_*`), so a consumer branches on a code rather than parsing prose. Its text says the envelope carries `{ code, message }` where the message may change but the code may not, which reads as though the granular catalog code is the wire `error.code`.
+
+That reading collides with a published contract. ADR-017 fixed the response envelope from the SDK side, and `@pulsar-stellar/sdk@0.1.0` is on npm validating `error.code` against exactly four lowercase values: `not_found`, `validation`, `internal`, `rate_limited`. Its `ErrorEnvelopeSchema` is a `z.enum` over those four. A granular code such as `VALIDATION_BAD_LIMIT` placed in `error.code` would fail that enum, so the SDK would not recognise the body as an error envelope at all: it would fall through to its generic non-success path and, worse, never see the `not_found` that ADR-019 requires to return null for an absent contract. Changing the wire `error.code` to admit catalog codes is therefore a breaking SDK release, which is precisely what the SDK-first envelope decision exists to prevent.
+
+The failure surface the four classes cannot express is real: a 400 today cannot tell a bad cursor from a bad ledger range from an unknown filter key, and that discrimination is the reason a catalog exists.
+
+### Decision
+
+The wire `error.code` stays the ADR-017 four-value class. The granular catalog code rides in `error.details.code` as a stable UPPER_SNAKE string. Each registered catalog code maps to exactly one wire class and one HTTP status. The error envelope on the wire is:
+
+```json
+{ "error": {
+    "code": "validation",
+    "message": "limit must be between 1 and 500",
+    "details": { "code": "VALIDATION_BAD_LIMIT" } } }
+```
+
+`error.code` is the class a current SDK switches on and Zod validates. `error.details.code` is the granular identifier a catalog-aware consumer branches on and `docs/error-codes.md` documents. The SDK's response parsing is lenient and strips unknown keys, so `details` is carried without breaking any published client, and a later SDK release can surface `details.code` as a typed member with no wire change. The message text may change freely; neither code changes without an ADR, the same wire-contract discipline ADR-023 applies to the `DecodedValue` union.
+
+The catalog grows with the surface. A code is registered only when a shipped path returns it, per ADR-037's rejection of a padded count.
+
+### Alternatives considered
+
+**Put the granular code in the wire `error.code`.** Rejected. It breaks `@pulsar-stellar/sdk@0.1.0`, whose `ErrorEnvelopeSchema` is a four-value enum; an unrecognised code would not parse as an error envelope, so the SDK would mishandle every failure and miss the `not_found` ADR-019 needs to signal absence. Extending a published wire contract to add codes is what ADR-017 exists to forbid.
+
+**Widen the SDK enum to accept any string and republish.** Rejected. It is a breaking change to a published package for no benefit the details channel does not already give, and it discards the compile-time safety the four-value union hands current consumers.
+
+**Keep only the four wire classes and add no granular catalog.** Rejected. That is the status quo the maintainer asked to improve. Four buckets cannot separate a bad cursor from a bad ledger range from an unknown filter, which is the discrimination the catalog and `docs/error-codes.md` exist to provide.
+
+**Carry the granular code in a custom HTTP header.** Rejected. It splits the failure across body and headers, is invisible to anyone reading a captured JSON response, and does not survive being logged or stored the way a body field does.
+
+### Consequences
+
+- H2's `internal/apierror` registry maps each catalog code to a wire class, an HTTP status, and a one-line meaning. The api package's error responder renders `error.code` from the class and `error.details.code` from the catalog code.
+- The panic-recovery middleware (step 62) is the first path to use this: wire class `internal`, catalog code `INTERNAL_PANIC`, HTTP 500, and a generic message that never carries the recovered panic value.
+- `docs/error-codes.md` documents the `details.code` catalog, and a CI check under H2 proves the document matches the registry.
+- Contract-facing catalog codes still align with `pulsar-core`'s `contracterror` enum through the cross-repo item already queued; this ADR fixes only where the code sits on the app's wire.
+- No published SDK behaviour changes: a 0.1.0 client keeps working, reading the class and ignoring the `details` it does not know.
+- This is a wire-shape clarification carried by the apierror package's own tests (every registered code has a class, a status, and a doc entry) rather than by a standalone test here.
