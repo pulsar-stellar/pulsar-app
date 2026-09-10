@@ -12,7 +12,7 @@ import (
 func TestRouterUnknownRouteReturnsNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
-	srv := NewServer(nil) // discard logger; this test asserts the HTTP contract only
+	srv := NewServer(nil, fakeContracts{}, "test") // discard logger; asserts the HTTP contract only
 	rr := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/does-not-exist", nil))
 
@@ -57,5 +57,32 @@ func TestRouterAppliesMiddlewareToNotFound(t *testing.T) {
 	}
 	if line["path"] != "/nope" {
 		t.Errorf("logged path = %v, want /nope", line["path"])
+	}
+}
+
+// A request to a real path with the wrong method returns 404 not_found carrying
+// NOT_FOUND_METHOD, distinct from the NOT_FOUND_ROUTE an unknown path gets. 405
+// is outside ADR-017's status set, so the method mismatch collapses to 404.
+func TestRouterWrongMethodReturnsMethodNotAllowedEnvelope(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer(nil, fakeContracts{}, "test")
+	rr := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/health", nil))
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rr.Code)
+	}
+	assertJSONContentType(t, rr)
+
+	var env decodedError
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("body is not JSON: %v; body=%s", err, rr.Body.String())
+	}
+	if env.Error.Code != "not_found" {
+		t.Errorf("error.code = %q, want not_found", env.Error.Code)
+	}
+	if env.Error.Details.Code != string(apierror.CodeNotFoundMethod) {
+		t.Errorf("error.details.code = %q, want %q", env.Error.Details.Code, apierror.CodeNotFoundMethod)
 	}
 }

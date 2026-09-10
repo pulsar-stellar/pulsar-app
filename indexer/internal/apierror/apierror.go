@@ -49,6 +49,18 @@ const CodeInternalPanic Code = "INTERNAL_PANIC"
 // finds the resource itself absent, which gets its own code.
 const CodeNotFoundRoute Code = "NOT_FOUND_ROUTE"
 
+// CodeNotFoundMethod is returned when a request matches a route's path but not
+// its method. ADR-017 fixes the status set at {200,400,404,429,500}, so the 405
+// this would otherwise be collapses to a 404; the catalog code keeps it
+// distinguishable from a genuinely unknown path.
+const CodeNotFoundMethod Code = "NOT_FOUND_METHOD"
+
+// CodeInternalStore is returned when a handler cannot read or write the store
+// and so cannot answer. The underlying error is logged server-side and never
+// sent, since a store error can carry a DSN or host detail; the message stays
+// generic.
+const CodeInternalStore Code = "INTERNAL_STORE"
+
 // entry is a code's registered metadata: the wire class a consumer switches
 // on, the HTTP status the response carries, and the one-line meaning
 // docs/error-codes.md publishes.
@@ -70,6 +82,16 @@ var registry = map[Code]entry{
 		class:   ClassNotFound,
 		status:  http.StatusNotFound,
 		meaning: "No endpoint matches the request path.",
+	},
+	CodeNotFoundMethod: {
+		class:   ClassNotFound,
+		status:  http.StatusNotFound,
+		meaning: "The request path exists but does not accept this method.",
+	},
+	CodeInternalStore: {
+		class:   ClassInternal,
+		status:  http.StatusInternalServerError,
+		meaning: "The indexer could not reach its store to answer the request. The failure is logged server-side; retrying may succeed.",
 	},
 }
 

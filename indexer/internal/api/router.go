@@ -8,16 +8,18 @@ import (
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/apierror"
 )
 
-// Routes builds the HTTP handler for the read API: a chi router carrying a
-// not-found handler so an unmatched route still answers with the ADR-017
-// envelope rather than chi's bare 404, wrapped by the request-logging and
-// panic-recovery middleware. Business routes are mounted here as each handler
-// lands.
+// Routes builds the HTTP handler for the read API: a chi router carrying the
+// business routes, a not-found handler so an unmatched route still answers with
+// the ADR-017 envelope rather than chi's bare 404, and a method-not-allowed
+// handler so a known path hit with the wrong method answers the same way, all
+// wrapped by the request-logging and panic-recovery middleware.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 
 	r.NotFound(s.handleNotFound)
-	// Business routes are mounted here as each handler lands.
+	r.MethodNotAllowed(s.handleMethodNotAllowed)
+
+	r.Get("/health", s.handleHealth)
 
 	// RequestLogger and Recoverer wrap the whole mux, not chi's Use stack: chi
 	// skips its Use middleware for the not-found path until a route is

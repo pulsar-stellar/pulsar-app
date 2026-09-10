@@ -115,6 +115,34 @@ func TestNotFoundRouteMapsToNotFound404(t *testing.T) {
 	}
 }
 
+func TestNotFoundMethodMapsToNotFound404(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeNotFoundMethod.Class(); got != ClassNotFound {
+		t.Errorf("Class() = %q, want %q", got, ClassNotFound)
+	}
+	if got := CodeNotFoundMethod.Status(); got != http.StatusNotFound {
+		t.Errorf("Status() = %d, want %d", got, http.StatusNotFound)
+	}
+	if !CodeNotFoundMethod.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestInternalStoreMapsToInternal500(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeInternalStore.Class(); got != ClassInternal {
+		t.Errorf("Class() = %q, want %q", got, ClassInternal)
+	}
+	if got := CodeInternalStore.Status(); got != http.StatusInternalServerError {
+		t.Errorf("Status() = %d, want %d", got, http.StatusInternalServerError)
+	}
+	if !CodeInternalStore.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
 // An unregistered code must degrade to internal/500, never to an empty class
 // or a zero status, because either would reach the wire as something the SDK
 // cannot validate.
