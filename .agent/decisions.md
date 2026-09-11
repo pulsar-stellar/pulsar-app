@@ -1468,3 +1468,34 @@ The catalog grows with the surface. A code is registered only when a shipped pat
 - Contract-facing catalog codes still align with `pulsar-core`'s `contracterror` enum through the cross-repo item already queued; this ADR fixes only where the code sits on the app's wire.
 - No published SDK behaviour changes: a 0.1.0 client keeps working, reading the class and ignoring the `details` it does not know.
 - This is a wire-shape clarification carried by the apierror package's own tests (every registered code has a class, a status, and a doc entry) rather than by a standalone test here.
+
+---
+
+## ADR-039: Deleting an untracked contract returns 404, not an idempotent success
+Date: 2026-09-11
+Status: accepted
+
+### Context
+
+ADR-018 made `POST /contracts` idempotent and closed by naming what it did not settle: "Deleting an untracked contract is a separate question this ADR does not answer." `DELETE /contracts/:id` returns 204 on a successful delete, but its behaviour for a contract the indexer is not tracking was left open. Two readings exist, the same fork ADR-018 faced for registration: treat the delete as idempotent and return success whether or not a row was there, or report that there was nothing to delete.
+
+Two facts narrow the choice. The store already distinguishes the cases: `Contracts.Delete` returns `ErrNotFound` when no row matched, with the comment that a caller can tell 204 from 404. And the SDK does not call this route at all; `@pulsar-stellar/sdk@0.1.0`'s contract surface is `registerContract`, `getContract`, and `listContracts`, with no delete, so whichever reading lands here cannot break a published client.
+
+### Decision
+
+`DELETE /contracts/:id` returns 204 with no body when a contract was removed, and 404 with a `not_found` error envelope, catalog code `NOT_FOUND_CONTRACT`, when no contract with that id is tracked. The operation is not made idempotent on absence.
+
+This is the same absence signal `GET /contracts/:id` sends under ADR-020: a structured 404 that names the resource as untracked, not a bare status and not a silent success.
+
+### Alternatives considered
+
+**Idempotent delete: 204 whether or not a row existed.** Rejected. ADR-018 chose idempotency for registration so a client that loses the response to a network failure and retries is not punished for doing the right thing. That reasoning does not carry here. The client ADR-018 had in mind is the SDK, which retries transport failures, and the SDK has no delete method, so the lost-response-then-retry path this would protect does not exist for a published caller. Against that thin benefit, collapsing absence into success hides a real mistake: an operator who deletes the wrong id learns nothing, where a 404 tells them the id was already untracked. The end state a retry wants, the contract gone, is exactly what the 404 reports.
+
+**404 with a bare status and no envelope.** Rejected for the reason ADR-019 rejected it on the read path: a bare 404 is indistinguishable from a proxy or routing error, and an operator tool reading the response cannot tell "the indexer says this contract is untracked" from "the request never reached the indexer." The structured envelope is the signal.
+
+### Consequences
+
+- Phase D implements `DELETE /contracts/:id` symmetric with `GET /contracts/:id`: `store.ErrNotFound` maps to a 404 carrying `NOT_FOUND_CONTRACT`, any other store error to a 500 carrying `INTERNAL_STORE`, and a successful delete to a bare 204.
+- `NOT_FOUND_CONTRACT` is one catalog code shared by both single-contract routes, registered in `internal/apierror` when those handlers ship, per ADR-037.
+- No published SDK behaviour changes, since no SDK method calls this route. If a delete method is added to the SDK later, it inherits this 404-on-absence contract and decides there how to surface it, in its own ADR.
+- ADR-018's deferred question is now answered; the registration and deletion paths are deliberately asymmetric, and the asymmetry is the point rather than an oversight.
