@@ -1,6 +1,10 @@
 # @pulsar-stellar/sdk
 
+[![npm](https://img.shields.io/npm/v/@pulsar-stellar/sdk?logo=npm)](https://www.npmjs.com/package/@pulsar-stellar/sdk) [![license](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](./LICENSE)
+
 TypeScript client for Soroban contract events. Reads decoded event history from a Pulsar indexer, or tails events straight from Stellar RPC.
+
+Published on npm as [`@pulsar-stellar/sdk`](https://www.npmjs.com/package/@pulsar-stellar/sdk).
 
 Stellar RPC keeps roughly a week of history. An indexer keeps all of it. This SDK gives you one event type and one set of methods across both, so the source an event came from is a deployment decision rather than a rewrite.
 
