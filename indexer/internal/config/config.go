@@ -12,16 +12,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/pulsar-stellar/pulsar-app/indexer/internal/validate"
 )
 
 // MaxBatchSize is the largest page Soroban RPC will serve. getEvents rejects a
 // limit above this with -32602, so a larger BatchSize would fail every call.
 // See ADR-028.
 const MaxBatchSize = 10000
-
-// contractIDLength is the length of a Stellar contract strkey, which is a
-// 'C' discriminant followed by 55 base32 characters.
-const contractIDLength = 56
 
 // Config is the indexer's validated configuration. Every field is populated by
 // Load, and a Config that Load returned without error is safe to use as-is.
@@ -249,10 +247,8 @@ func contractList(getenv Getenv, name string) ([]string, error) {
 		if id == "" {
 			return nil, fmt.Errorf("%s has an empty entry at position %d", name, i+1)
 		}
-		if len(id) != contractIDLength || !strings.HasPrefix(id, "C") {
-			return nil, fmt.Errorf(
-				"%s entry %d is %q, which is not a contract ID; expected %d characters beginning with C",
-				name, i+1, id, contractIDLength)
+		if err := validate.ContractID(id); err != nil {
+			return nil, fmt.Errorf("%s entry %d is %q: %w", name, i+1, id, err)
 		}
 		ids = append(ids, id)
 	}
