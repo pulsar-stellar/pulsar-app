@@ -14,11 +14,11 @@ type Server struct {
 	// carries the component twice.
 	log *slog.Logger
 
-	// contracts backs the health endpoint's status read. It is the narrow
-	// contractStatsReader rather than the whole store, so a handler test can
+	// contracts backs the contract routes and the health status read. It is the
+	// contractStore interface rather than the whole store, so a handler test can
 	// substitute a fake and the api package depends on the store only through
-	// the slice of it that it uses.
-	contracts contractStatsReader
+	// the methods its handlers call.
+	contracts contractStore
 
 	// version is the build identifier /health reports. NewServer guarantees it
 	// is non-empty, since the SDK's health schema rejects an empty string.
@@ -30,7 +30,7 @@ type Server struct {
 // discarding one so a handler never nil-panics, matching the poller's
 // constructor. An empty version becomes "dev", so an unstamped build still
 // reports a value the health schema accepts.
-func NewServer(log *slog.Logger, contracts contractStatsReader, version string) *Server {
+func NewServer(log *slog.Logger, contracts contractStore, version string) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}

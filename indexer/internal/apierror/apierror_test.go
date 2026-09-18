@@ -143,6 +143,48 @@ func TestInternalStoreMapsToInternal500(t *testing.T) {
 	}
 }
 
+func TestValidationContractIDMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationContractID.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationContractID.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationContractID.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestValidationBodyMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationBody.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationBody.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationBody.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestNotFoundContractMapsToNotFound404(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeNotFoundContract.Class(); got != ClassNotFound {
+		t.Errorf("Class() = %q, want %q", got, ClassNotFound)
+	}
+	if got := CodeNotFoundContract.Status(); got != http.StatusNotFound {
+		t.Errorf("Status() = %d, want %d", got, http.StatusNotFound)
+	}
+	if !CodeNotFoundContract.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
 // An unregistered code must degrade to internal/500, never to an empty class
 // or a zero status, because either would reach the wire as something the SDK
 // cannot validate.

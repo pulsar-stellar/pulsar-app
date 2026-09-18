@@ -61,6 +61,24 @@ const CodeNotFoundMethod Code = "NOT_FOUND_METHOD"
 // generic.
 const CodeInternalStore Code = "INTERNAL_STORE"
 
+// CodeValidationContractID is returned when a contract ID a request supplies,
+// in the path of /contracts/:id or the contract_id field of a registration
+// body, is not a well-formed Soroban contract ID. It is validate.ContractID
+// failing at the HTTP boundary, before the store is touched.
+const CodeValidationContractID Code = "VALIDATION_CONTRACT_ID"
+
+// CodeValidationBody is returned when a request body is absent, is not the JSON
+// object the route expects, or exceeds the size the handler will read. It
+// covers the body envelope itself; a malformed value inside a well-formed body
+// carries its own field code, such as CodeValidationContractID.
+const CodeValidationBody Code = "VALIDATION_BODY"
+
+// CodeNotFoundContract is returned when a request names a contract the indexer
+// is not tracking: the absent case of GET and DELETE /contracts/:id. Per
+// ADR-019 it rides on a 404 so absence is a structured signal, and it stays
+// distinct from CodeNotFoundRoute, which means the path itself matched nothing.
+const CodeNotFoundContract Code = "NOT_FOUND_CONTRACT"
+
 // entry is a code's registered metadata: the wire class a consumer switches
 // on, the HTTP status the response carries, and the one-line meaning
 // docs/error-codes.md publishes.
@@ -92,6 +110,21 @@ var registry = map[Code]entry{
 		class:   ClassInternal,
 		status:  http.StatusInternalServerError,
 		meaning: "The indexer could not reach its store to answer the request. The failure is logged server-side; retrying may succeed.",
+	},
+	CodeValidationContractID: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The contract ID is not a well-formed Soroban contract ID: the letter C followed by 55 base32 characters.",
+	},
+	CodeValidationBody: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The request body is missing, is not the JSON object the endpoint expects, or is too large.",
+	},
+	CodeNotFoundContract: {
+		class:   ClassNotFound,
+		status:  http.StatusNotFound,
+		meaning: "The indexer is not tracking the requested contract.",
 	},
 }
 

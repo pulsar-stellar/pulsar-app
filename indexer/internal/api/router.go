@@ -21,6 +21,15 @@ func (s *Server) Routes() http.Handler {
 
 	r.Get("/health", s.handleHealth)
 
+	// The contract routes are registered flat rather than under a chi subrouter
+	// so /contracts matches the SDK's paths exactly, with no trailing slash and
+	// no redirect. List and register share the collection path; get and delete
+	// share the item path, with the ID as a URL parameter the handler reads.
+	r.Get("/contracts", s.handleListContracts)
+	r.Post("/contracts", s.handleRegisterContract)
+	r.Get("/contracts/{id}", s.handleGetContract)
+	r.Delete("/contracts/{id}", s.handleDeleteContract)
+
 	// RequestLogger and Recoverer wrap the whole mux, not chi's Use stack: chi
 	// skips its Use middleware for the not-found path until a route is
 	// registered, so wrapping the mux is what applies them to every request,
