@@ -1499,3 +1499,44 @@ This is the same absence signal `GET /contracts/:id` sends under ADR-020: a stru
 - `NOT_FOUND_CONTRACT` is one catalog code shared by both single-contract routes, registered in `internal/apierror` when those handlers ship, per ADR-037.
 - No published SDK behaviour changes, since no SDK method calls this route. If a delete method is added to the SDK later, it inherits this 404-on-absence contract and decides there how to surface it, in its own ADR.
 - ADR-018's deferred question is now answered; the registration and deletion paths are deliberately asymmetric, and the asymmetry is the point rather than an oversight.
+
+---
+
+## ADR-040: Required status checks match bare job names, and a required workflow is never path-filtered
+Date: 2026-09-22
+Status: accepted
+
+### Context
+
+The `main-protection` ruleset gates a merge to `main` on two required status checks and one approving review. PR #1, a docs-only change, could not be merged on a green board: it took an admin bypass, and its check panel showed two required checks stuck at "Expected, waiting for status to be reported" beside a third, identically named check that had already run and passed. Two independent misconfigurations produced that state, and neither was recorded anywhere.
+
+First, the required contexts were stored as `ci-go / fmt, vet, test, build` and `ci-ts / lint, typecheck, test, build`. GitHub matches a required status check against the check-run name, which Actions sets to the job's `name`, here `fmt, vet, test, build` and `lint, typecheck, test, build`. The `workflow /` prefix is display only in the pull-request UI. A required context that carries the prefix matches no run, so it never leaves "Expected", and the real run appears next to it as a second, unmatched entry. That is the doubled check.
+
+Second, `ci-go` was triggered with `paths: ['indexer/**']` on both `push` and `pull_request`. A pull request that leaves `indexer/**` untouched never triggers it, so a required check that is path-filtered cannot report on such a pull request at all. A docs, SDK, or web change was unmergeable without a bypass regardless of the context fix.
+
+Both faults sit outside the SDK and indexer wire surface, but they block the contribution flow this repo is about to open, and the workaround, an admin bypass, silently disables the gate the ruleset exists to enforce.
+
+### Decision
+
+- A required status check context is the bare job name GitHub reports: `fmt, vet, test, build` for ci-go and `lint, typecheck, test, build` for ci-ts. No `workflow /` prefix.
+- A workflow whose check is required on `main` carries no `paths:` filter, so it runs and reports on every push and pull request to `main`. ci-go and ci-ts are unfiltered.
+- A workflow that is not a required check may keep a `paths:` filter. ci-web stays filtered to `apps/web/**` and `packages/sdk/**`.
+- The rest of the ruleset is unchanged: linear history, no force-push, no branch deletion, one approving review, and the admin `RepositoryRole` bypass reserved for urgent maintainer fixes.
+
+### Alternatives considered
+
+**Rename the jobs to carry a `ci-go` or `ci-ts` prefix so the stored contexts match.** Rejected. It contorts every job name to accommodate a mistaken context string, and the bare job name is what GitHub reports and what every contributor reads in the check panel. The fix belongs in the one wrong place, the ruleset, not spread across the workflow files.
+
+**Drop ci-go from the required checks so a path-filtered workflow stops blocking unrelated pull requests.** Rejected. The indexer is the active sub-stack, and its build, vet, and race tests are exactly what a merge gate should hold. Removing the requirement to dodge a filter trades a real guarantee for a config convenience.
+
+**Add a skipped-but-required companion job that reports success when `indexer/**` is untouched.** Rejected. It is more YAML and a fiddly pattern whose only purpose is to preserve a filter a required check should not have. Removing the filter is simpler and has the same effect.
+
+**Keep merging under the admin bypass.** Rejected. The bypass exists for urgent maintainer fixes, not the normal path. Leaning on it for every pull request means no contributor's PR can go green on its own and the gate is decorative.
+
+### Consequences
+
+- A contributor's pull request to `main` triggers one ci-go run and one ci-ts run. A feature-branch push does not match `branches: [main]`, so there is no duplicate run. Both report as the required checks, and the PR is mergeable on green plus one review with no bypass.
+- The doubled-check display is gone: the required context and the real run reconcile to a single line per workflow.
+- ci-web still does not run on a pull request that touches neither `apps/web/**` nor `packages/sdk/**`, which is correct because it is not required.
+- GitHub's first-time-contributor approval gate is unchanged: a maintainer still approves the first workflow run for a new or forked contributor. That is an intentional GitHub safeguard, not part of this decision.
+- This ADR records a fix already applied, because it was repairing the CI system itself. The workflow half shipped in commit `93bf71d` on `main`, where ci-go then ran and passed. The ruleset half corrected the two contexts to the bare job names on the `main-protection` ruleset through the REST API, verified live with all five rules intact, enforcement active, and the admin bypass retained. This PR is the first change to flow through the corrected gate.
