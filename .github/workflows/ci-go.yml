@@ -3,10 +3,8 @@ name: ci-go
 on:
   push:
     branches: [main]
-    paths: ['indexer/**']
   pull_request:
     branches: [main]
-    paths: ['indexer/**']
 
 permissions:
   contents: read
