@@ -64,6 +64,11 @@ func run() error {
 		return fmt.Errorf("resolving database driver: %w", err)
 	}
 
+	dialect, err := dialectFor(driver.Kind)
+	if err != nil {
+		return fmt.Errorf("resolving store dialect: %w", err)
+	}
+
 	handle, err := db.Open(driver, db.ConnOptions{
 		DSN:              cfg.DBURL,
 		AllowInsecureTLS: cfg.DBAllowInsecureTLS,
@@ -107,6 +112,7 @@ func run() error {
 		decoder.New(),
 		handle,
 		contracts,
+		dialect,
 		cfg.PollInterval,
 		cfg.BatchSize,
 		log,
@@ -150,4 +156,20 @@ func run() error {
 // poller-stopped log fires only on an unexpected exit.
 func errorIsCancellation(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// dialectFor maps a resolved driver to the store dialect that the events store
+// needs for the one query the engines spell differently. The switch is
+// exhaustive over the supported kinds; an unknown kind is a programmer error,
+// since Resolve already rejected every other name, so it fails closed rather
+// than defaulting to an engine.
+func dialectFor(kind db.Kind) (store.Dialect, error) {
+	switch kind {
+	case db.KindSQLite:
+		return store.DialectSQLite, nil
+	case db.KindPostgres:
+		return store.DialectPostgres, nil
+	default:
+		return 0, fmt.Errorf("no store dialect for driver %q", kind)
+	}
 }

@@ -51,6 +51,7 @@ type Poller struct {
 	decoder   *decoder.Decoder
 	db        txBeginner
 	contracts *store.Contracts
+	dialect   store.Dialect
 	interval  time.Duration
 	batchSize int
 	logger    *slog.Logger
@@ -59,13 +60,17 @@ type Poller struct {
 // NewPoller builds a Poller over a decoded RPC client, a decoder, and the
 // stores. The batch size is bounded by the caller (config rejects a size above
 // the RPC page cap, per ADR-028), and the interval is the configured poll
-// interval. A nil logger is replaced with a discarding one so the loop never
-// panics on a missing dependency.
+// interval. The dialect is the engine the store speaks; the poller only ever
+// inserts, which is portable, but it carries the dialect so the events store it
+// builds per transaction is constructed the one way there is. A nil logger is
+// replaced with a discarding one so the loop never panics on a missing
+// dependency.
 func NewPoller(
 	caller Caller,
 	dec *decoder.Decoder,
 	database txBeginner,
 	contracts *store.Contracts,
+	dialect store.Dialect,
 	interval time.Duration,
 	batchSize int,
 	logger *slog.Logger,
@@ -78,6 +83,7 @@ func NewPoller(
 		decoder:   dec,
 		db:        database,
 		contracts: contracts,
+		dialect:   dialect,
 		interval:  interval,
 		batchSize: batchSize,
 		logger:    logger,
@@ -320,7 +326,7 @@ func (p *Poller) commit(
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	inserted, err := store.NewEvents(tx).Insert(ctx, events)
+	inserted, err := store.NewEvents(tx, p.dialect).Insert(ctx, events)
 	if err != nil {
 		return fmt.Errorf("rpc: inserting %d events for %s: %w", len(events), contractID, err)
 	}
