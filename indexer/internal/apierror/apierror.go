@@ -79,6 +79,44 @@ const CodeValidationBody Code = "VALIDATION_BODY"
 // distinct from CodeNotFoundRoute, which means the path itself matched nothing.
 const CodeNotFoundContract Code = "NOT_FOUND_CONTRACT"
 
+// CodeValidationLimit is returned when the limit query parameter of the events
+// list is not a positive integer within the range the SDK fixes, 1 to 500. The
+// ceiling matches @pulsar-stellar/sdk's EVENT_QUERY_MAX_LIMIT and is lower than
+// the store's own 10000 page cap, so the HTTP surface rejects a page the SDK
+// would never ask for. See ADR-041.
+const CodeValidationLimit Code = "VALIDATION_LIMIT"
+
+// CodeValidationCursor is returned when the cursor query parameter of the
+// events list is not a run of digits, the shape a cursor takes on the wire per
+// ADR-021. A cursor the client did not receive from a prior next_cursor is
+// rejected here rather than silently returning the first page.
+const CodeValidationCursor Code = "VALIDATION_CURSOR"
+
+// CodeValidationOrder is returned when the order query parameter of the events
+// list is neither "asc" nor "desc". The match is case-sensitive to mirror the
+// SDK's lowercase enum; an empty order is not this error, since the handler
+// defaults it to descending. See ADR-041.
+const CodeValidationOrder Code = "VALIDATION_ORDER"
+
+// CodeValidationLedgerRange is returned when the from_ledger or to_ledger query
+// parameter of the events list is negative, is not an integer, or names an
+// empty window with from_ledger greater than to_ledger. It is the ledger-window
+// counterpart of CodeValidationLimit, caught at the boundary before the store
+// is touched.
+const CodeValidationLedgerRange Code = "VALIDATION_LEDGER_RANGE"
+
+// CodeValidationEventID is returned when the id path segment of GET /events/{id}
+// is not a run of digits. An event id travels as a string of digits per ADR-021,
+// so a non-numeric id cannot name an event and is rejected before the store is
+// queried, distinct from a well-formed id that finds no event.
+const CodeValidationEventID Code = "VALIDATION_EVENT_ID"
+
+// CodeNotFoundEvent is returned when GET /events/{id} names a well-formed event
+// id the indexer has not stored. Per ADR-021 it rides on a 404 so the SDK's
+// event() can return null, and it stays distinct from CodeValidationEventID,
+// which means the id was not a number in the first place.
+const CodeNotFoundEvent Code = "NOT_FOUND_EVENT"
+
 // entry is a code's registered metadata: the wire class a consumer switches
 // on, the HTTP status the response carries, and the one-line meaning
 // docs/error-codes.md publishes.
@@ -125,6 +163,36 @@ var registry = map[Code]entry{
 		class:   ClassNotFound,
 		status:  http.StatusNotFound,
 		meaning: "The indexer is not tracking the requested contract.",
+	},
+	CodeValidationLimit: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The limit query parameter is not an integer between 1 and 500.",
+	},
+	CodeValidationCursor: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The cursor query parameter is not a value returned by a prior page's next_cursor.",
+	},
+	CodeValidationOrder: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The order query parameter is neither asc nor desc.",
+	},
+	CodeValidationLedgerRange: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "A ledger bound is negative or not an integer, or from_ledger is greater than to_ledger.",
+	},
+	CodeValidationEventID: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The event id is not a run of digits.",
+	},
+	CodeNotFoundEvent: {
+		class:   ClassNotFound,
+		status:  http.StatusNotFound,
+		meaning: "The indexer has not stored an event with the requested id.",
 	},
 }
 
