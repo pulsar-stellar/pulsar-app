@@ -1597,3 +1597,41 @@ The two engines also spell a JSON substring test differently, and CI runs the li
 - The Postgres `topic_contains` fragment is covered by a `buildEventsQuery` construction test rather than a live query, because CI runs the store suite against SQLite only. A live Postgres CI service is a separate follow-up, not gated on this work.
 - The `idx_events_topics` GIN index is now known to be unused by the shipped query. It is retained rather than dropped so a future trigram-or-containment decision starts from the migration already present, and this ADR is the record of why it does not serve the current filter.
 - No published SDK behaviour changes: the routes implement the contract `@pulsar-stellar/sdk@0.1.0-app` already encodes, so the SDK's `events()` and `event()` work end to end against a live indexer for the first time.
+
+## ADR-042: The events list validates its name and topic_contains filters for storable UTF-8
+Date: 2026-09-24
+Status: accepted
+
+### Context
+
+A security review of the events read surface built in step 68 (ADR-041) found one boundary gap. Every numeric and enum query parameter of `GET /contracts/{id}/events` was validated before the request reached the store, but the two free-text filters, `name` and `topic_contains`, were passed through raw on the reasoning that an empty value is absent and the store matches any non-empty value literally. That is true for well-formed text, but it is not the whole input space. Postgres `text` cannot hold a NUL byte or an invalid UTF-8 sequence, so a request carrying `name=%00` or an invalid-UTF-8 `topic_contains` would pass the handler, reach the store, and fail there. A client mistake would surface as a 500 `INTERNAL_STORE`, the class reserved for the indexer's own faults, rather than the 400 a malformed request deserves. This also crossed a standing rule: validate all user input at the boundary and fail fast, which step 68's own validation layer had applied to every other parameter.
+
+The SDK's `EventQuerySchema` constrains both fields only as `z.string().min(1).optional()`: a non-empty string, with no maximum length and no character class. So the fix had to reject what the store cannot store without narrowing what the published contract allows.
+
+### Decision
+
+**Both free-text filters are validated for shape at the boundary.** A new `validate.EventFilterText` is applied to `name` and to `topic_contains` in `parseEventQuery`, before the `store.EventQuery` is assembled. An empty value returns the empty string unchanged: it stays absent, the no-filter reading the store already gives it and the value the SDK omits rather than transmits, so an unfiltered page remains a valid request. A non-empty value must be valid UTF-8 (`utf8.ValidString`) and must contain no NUL byte (`strings.IndexByte(raw, 0) < 0`); anything else is `ErrFilterText`, which the handler maps to a 400.
+
+**No minimum or maximum length is imposed.** The check is exactly "storable UTF-8 or absent" and nothing narrower. Enforcing the SDK's `min(1)` at the indexer would reject an empty value that the indexer deliberately reads as absent, and imposing a maximum length would invent a limit the published contract does not carry. The store matches the term literally, so no charset or escaping constraint is needed either. The validator's job is only to keep a value the storage engine cannot represent from reaching it as a 500.
+
+**One shared catalog code, `VALIDATION_FILTER`** (`validation`/400), covers both fields, since their shape rule is identical. This follows the `VALIDATION_LEDGER_RANGE` precedent from ADR-041, where `from_ledger` and `to_ledger` share one code and the message names the offending field. Registering a new code is a wire-contract change the apierror package's own rule requires an ADR for, which is the immediate reason this decision is recorded rather than folded silently into ADR-041.
+
+### Alternatives considered
+
+**Reject the malformed value at the store instead.** Rejected. The store returning an error for un-storable input is a correct backstop, but on its own it classifies a client mistake as an internal fault: the envelope would carry `internal`/500, and the failure would be logged as an indexer error. Validation belongs at the boundary, where every other parameter is already checked, so the class reflects whose mistake it was.
+
+**Enforce the SDK's `min(1)` so an empty filter is a 400.** Rejected. The indexer treats an empty filter as absent by design, the same thing the SDK expresses by omitting the field; turning that into an error would reject a legitimate unfiltered page and diverge from the store's own reading of the zero value.
+
+**Impose a maximum filter length.** Rejected. The SDK schema sets none, so a ceiling here would reject input the published contract permits. A length bound is a denial-of-service concern better addressed uniformly at the server layer (request size, statement timeout) than by a guess baked into one validator.
+
+**A separate code per field (`VALIDATION_NAME`, `VALIDATION_TOPIC_CONTAINS`).** Rejected. The two fields fail for exactly the same reason, and the message already names the field, so two codes would add wire surface without adding signal, against the shared-code precedent ADR-041 set for the ledger bounds.
+
+### Consequences
+
+- `parseEventQuery` now validates `name` and `topic_contains` alongside the numeric and enum parameters; a malformed filter is a 400 `VALIDATION_FILTER` naming the field, never a 500. The store still receives only storable text.
+- The catalog gains `VALIDATION_FILTER`. The wire class set of ADR-017 is unchanged, and no existing code's meaning moves; a 0.1.0 client that never sends a malformed filter sees no behavioural change.
+- Empty stays absent: this ADR does not change the empty-value semantics ADR-041 relied on, it only constrains the non-empty case.
+- Follow-ups carried forward from the same review, none of which gate step 68:
+  - A `statement_timeout` (or equivalent read deadline) belongs with the `http.Server` wiring at step 72, where the server and its context deadlines are configured; it is the general remedy for a slow or oversized read, of which an unbounded substring scan is one case, and is out of place in a per-parameter validator.
+  - The trigram index that would serve the `topic_contains` scan on Postgres stays deferred per ADR-041; the substring filter is correct without it at showcase scale.
+  - A Postgres integration test exercising the `topic_contains` array guard against a live engine remains the open follow-up ADR-041 recorded, still gated on a Postgres CI service.
