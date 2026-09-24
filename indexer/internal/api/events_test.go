@@ -323,6 +323,8 @@ func TestListEventsRejectsInvalidQueryParams(t *testing.T) {
 		{"from_ledger is not a number", "from_ledger=abc", apierror.CodeValidationLedgerRange},
 		{"to_ledger is not a number", "to_ledger=nope", apierror.CodeValidationLedgerRange},
 		{"inverted ledger window", "from_ledger=100&to_ledger=50", apierror.CodeValidationLedgerRange},
+		{"name carries a NUL byte", "name=%00", apierror.CodeValidationFilter},
+		{"topic_contains is invalid utf-8", "topic_contains=%ff", apierror.CodeValidationFilter},
 	}
 
 	for _, tt := range tests {

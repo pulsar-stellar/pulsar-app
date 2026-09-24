@@ -241,6 +241,20 @@ func TestValidationLedgerRangeMapsToValidation400(t *testing.T) {
 	}
 }
 
+func TestValidationFilterMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationFilter.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationFilter.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationFilter.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
 func TestValidationEventIDMapsToValidation400(t *testing.T) {
 	t.Parallel()
 

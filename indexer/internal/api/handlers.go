@@ -242,10 +242,12 @@ func (s *Server) handleDeleteContract(w http.ResponseWriter, r *http.Request) {
 // catalogued 400 rather than a store error the handler would map to a 500. Each
 // validator mirrors one field of the SDK's EventQuerySchema; on the first
 // failure it returns the apierror the handler writes, naming the field that
-// failed. name and topic_contains are passed through raw: an empty value is
-// absent, which the store reads as no filter, and the SDK never sends an empty
-// one. contractID is the already-validated path id, set on the query so the
-// store scopes the read to that contract.
+// failed. name and topic_contains are validated for shape: an empty value is
+// absent, which the store reads as no filter and the SDK never sends, while a
+// non-empty value must be valid UTF-8 with no NUL byte, so a malformed filter is
+// a 400 here rather than a store error mapped to a 500 later (ADR-042).
+// contractID is the already-validated path id, set on the query so the store
+// scopes the read to that contract.
 func parseEventQuery(r *http.Request, contractID string) (store.EventQuery, *apierror.Error) {
 	params := r.URL.Query()
 
@@ -272,16 +274,24 @@ func parseEventQuery(r *http.Request, contractID string) (store.EventQuery, *api
 	if err := validate.LedgerRange(fromLedger, toLedger); err != nil {
 		return store.EventQuery{}, apierror.New(apierror.CodeValidationLedgerRange, "The from_ledger query parameter must not be greater than to_ledger.")
 	}
+	name, err := validate.EventFilterText(params.Get("name"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationFilter, "The name query parameter must be valid UTF-8 and must not contain a NUL byte.")
+	}
+	topicContains, err := validate.EventFilterText(params.Get("topic_contains"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationFilter, "The topic_contains query parameter must be valid UTF-8 and must not contain a NUL byte.")
+	}
 
 	return store.EventQuery{
 		ContractID:    contractID,
-		Name:          params.Get("name"),
+		Name:          name,
 		FromLedger:    fromLedger,
 		ToLedger:      toLedger,
 		Limit:         limit,
 		Cursor:        cursor,
 		Order:         order,
-		TopicContains: params.Get("topic_contains"),
+		TopicContains: topicContains,
 	}, nil
 }
 

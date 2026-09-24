@@ -105,6 +105,15 @@ const CodeValidationOrder Code = "VALIDATION_ORDER"
 // is touched.
 const CodeValidationLedgerRange Code = "VALIDATION_LEDGER_RANGE"
 
+// CodeValidationFilter is returned when the name or topic_contains query
+// parameter of the events list is not valid UTF-8 or carries a NUL byte, which
+// Postgres text cannot store and which no @pulsar-stellar/sdk client would
+// send. It is a single code shared by both free-text filters, whose shape rule
+// is identical, the way CodeValidationLedgerRange is shared by from_ledger and
+// to_ledger. An empty filter is not this error; it is simply absent, a valid
+// request for an unfiltered page. See ADR-042.
+const CodeValidationFilter Code = "VALIDATION_FILTER"
+
 // CodeValidationEventID is returned when the id path segment of GET /events/{id}
 // is not a run of digits. An event id travels as a string of digits per ADR-021,
 // so a non-numeric id cannot name an event and is rejected before the store is
@@ -183,6 +192,11 @@ var registry = map[Code]entry{
 		class:   ClassValidation,
 		status:  http.StatusBadRequest,
 		meaning: "A ledger bound is negative or not an integer, or from_ledger is greater than to_ledger.",
+	},
+	CodeValidationFilter: {
+		class:   ClassValidation,
+		status:  http.StatusBadRequest,
+		meaning: "The name or topic_contains query parameter is not valid UTF-8 or contains a NUL byte.",
 	},
 	CodeValidationEventID: {
 		class:   ClassValidation,

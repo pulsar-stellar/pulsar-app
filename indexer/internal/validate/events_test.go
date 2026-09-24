@@ -265,3 +265,46 @@ func TestEventID(t *testing.T) {
 		})
 	}
 }
+
+func TestEventFilterText(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+		err  error
+	}{
+		{"empty is absent, no filter", "", "", nil},
+		{"ascii passes through", "transfer", "transfer", nil},
+		{"multibyte utf-8 passes through", "café日本", "café日本", nil},
+		{"like wildcards are literal, not escaped", "a%_\\b", "a%_\\b", nil},
+		{"a leading space is content, not trimmed", " tr", " tr", nil},
+
+		{"a NUL byte is rejected", "tr\x00ansfer", "", validate.ErrFilterText},
+		{"a bare NUL is rejected", "\x00", "", validate.ErrFilterText},
+		{"invalid utf-8 is rejected", "\xff", "", validate.ErrFilterText},
+		{"a lone continuation byte is rejected", "tr\x80", "", validate.ErrFilterText},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := validate.EventFilterText(tc.raw)
+			if tc.err != nil {
+				if !errors.Is(err, tc.err) {
+					t.Fatalf("EventFilterText(%q) error = %v, want %v", tc.raw, err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("EventFilterText(%q) = %v, want nil", tc.raw, err)
+			}
+			if got != tc.want {
+				t.Fatalf("EventFilterText(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}

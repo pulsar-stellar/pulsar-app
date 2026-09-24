@@ -4,6 +4,8 @@ import (
 	"errors"
 	"regexp"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 // The event-list query parameters, validated at the HTTP boundary before a
@@ -30,13 +32,16 @@ const (
 // events handlers map them to. A caller branches on these with errors.Is; the
 // handler translates each to its apierror code and the message never has to be
 // matched. ErrLedgerBound and ErrLedgerRange are distinct failures, a malformed
-// bound and an inverted window, that share the one VALIDATION_LEDGER_RANGE code.
+// bound and an inverted window, that share the one VALIDATION_LEDGER_RANGE code;
+// ErrFilterText is returned for both the name and topic_contains filters, which
+// share the one VALIDATION_FILTER code, since their shape rule is identical.
 var (
 	ErrLimit       = errors.New("limit is not an integer between 1 and 500")
 	ErrOrder       = errors.New("order is not asc or desc")
 	ErrCursor      = errors.New("cursor is not an event id")
 	ErrLedgerBound = errors.New("ledger bound is not a non-negative integer")
 	ErrLedgerRange = errors.New("from_ledger is greater than to_ledger")
+	ErrFilterText  = errors.New("filter text is not valid UTF-8 or contains a NUL byte")
 	ErrEventID     = errors.New("event id is not a string of digits")
 )
 
@@ -134,6 +139,28 @@ func LedgerRange(from, to int64) error {
 		return ErrLedgerRange
 	}
 	return nil
+}
+
+// EventFilterText validates a free-text events-list filter, name or
+// topic_contains. An empty value is absent: it means no filter and is returned
+// unchanged, the reading the store already gives an empty filter and the same
+// thing the SDK sends, since EventQuerySchema omits an empty filter rather than
+// transmitting one. A present value must be valid UTF-8 with no NUL byte:
+// Postgres text rejects both, so without this check a malformed filter reaches
+// the store and surfaces as a 500 rather than the 400 a malformed request
+// deserves. The SDK constrains name and topic_contains only to a non-empty
+// string, with no maximum length or character class (EventQuerySchema), so
+// nothing narrower is imposed here; the store matches the term literally. A
+// value that is not valid UTF-8, or carries a NUL byte, is ErrFilterText. See
+// ADR-042.
+func EventFilterText(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if !utf8.ValidString(raw) || strings.IndexByte(raw, 0) >= 0 {
+		return "", ErrFilterText
+	}
+	return raw, nil
 }
 
 // EventID validates the id path segment of GET /events/{id}. It must be a
