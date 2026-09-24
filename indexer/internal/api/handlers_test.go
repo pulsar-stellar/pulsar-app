@@ -102,7 +102,7 @@ type decodedHealth struct {
 func TestHealthReturnsTheStatusEnvelope(t *testing.T) {
 	t.Parallel()
 
-	srv := NewServer(nil, fakeContracts{stats: store.ContractStats{Count: 3, LatestLedger: 12345}}, "1.2.3")
+	srv := NewServer(nil, fakeContracts{stats: store.ContractStats{Count: 3, LatestLedger: 12345}}, fakeEvents{}, "1.2.3")
 	rr := httptest.NewRecorder()
 	srv.handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
 
@@ -149,7 +149,7 @@ func TestHealthReturnsTheStatusEnvelope(t *testing.T) {
 func TestHealthVersionFallsBackToDev(t *testing.T) {
 	t.Parallel()
 
-	srv := NewServer(nil, fakeContracts{}, "")
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "")
 	rr := httptest.NewRecorder()
 	srv.handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
 
@@ -170,7 +170,7 @@ func TestHealthReturns500WhenTheStoreFails(t *testing.T) {
 
 	log, buf := newTestLogger()
 	const secret = "connection to 10.0.0.5 refused: password rejected"
-	srv := NewServer(log, fakeContracts{err: errorString(secret)}, "1.2.3")
+	srv := NewServer(log, fakeContracts{err: errorString(secret)}, fakeEvents{}, "1.2.3")
 	rr := httptest.NewRecorder()
 	srv.handleHealth(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
 
@@ -347,7 +347,7 @@ func TestListContractsReturnsTheTrackedContracts(t *testing.T) {
 	}
 	srv := NewServer(nil, fakeContracts{listFn: func(context.Context) ([]models.Contract, error) {
 		return want, nil
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts", "")
 
@@ -384,7 +384,7 @@ func TestListContractsReturnsAnEmptyArrayNotNull(t *testing.T) {
 
 	srv := NewServer(nil, fakeContracts{listFn: func(context.Context) ([]models.Contract, error) {
 		return nil, nil // the store hands back a nil slice for an empty table
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts", "")
 
@@ -412,7 +412,7 @@ func TestListContractsReturns500WhenTheStoreFails(t *testing.T) {
 	const secret = "connection to 10.0.0.9 refused: password rejected"
 	srv := NewServer(log, fakeContracts{listFn: func(context.Context) ([]models.Contract, error) {
 		return nil, errorString(secret)
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts", "")
 
@@ -451,7 +451,7 @@ func TestRegisterContractReturnsTheStoredRecord(t *testing.T) {
 			srv := NewServer(nil, fakeContracts{registerFn: func(_ context.Context, id string) (models.Contract, error) {
 				gotID = id
 				return tt.record, nil
-			}}, "1.2.3")
+			}}, fakeEvents{}, "1.2.3")
 
 			rr := serve(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`)
 
@@ -520,7 +520,7 @@ func TestRegisterContractRejectsInvalidInput(t *testing.T) {
 			srv := NewServer(nil, fakeContracts{registerFn: func(context.Context, string) (models.Contract, error) {
 				t.Error("Register reached the store despite invalid input")
 				return models.Contract{}, nil
-			}}, "1.2.3")
+			}}, fakeEvents{}, "1.2.3")
 
 			rr := serve(srv, http.MethodPost, "/contracts", tt.body)
 
@@ -550,7 +550,7 @@ func TestRegisterContractReturns500WhenTheStoreFails(t *testing.T) {
 	const secret = "disk full on /var/lib/pulsar at host db-1"
 	srv := NewServer(log, fakeContracts{registerFn: func(context.Context, string) (models.Contract, error) {
 		return models.Contract{}, errorString(secret)
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`)
 
@@ -567,7 +567,7 @@ func TestGetContractReturnsTheRecord(t *testing.T) {
 	srv := NewServer(nil, fakeContracts{getFn: func(_ context.Context, id string) (models.Contract, error) {
 		gotID = id
 		return want, nil
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts/"+validContractID, "")
 
@@ -596,7 +596,7 @@ func TestGetContractReturns404WhenUntracked(t *testing.T) {
 
 	srv := NewServer(nil, fakeContracts{getFn: func(_ context.Context, id string) (models.Contract, error) {
 		return models.Contract{}, fmt.Errorf("store: contract %s: %w", id, store.ErrNotFound)
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts/"+validContractID, "")
 
@@ -609,7 +609,7 @@ func TestGetContractRejectsAMalformedID(t *testing.T) {
 	srv := NewServer(nil, fakeContracts{getFn: func(context.Context, string) (models.Contract, error) {
 		t.Error("Get reached the store despite a malformed id")
 		return models.Contract{}, nil
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts/not-a-contract-id", "")
 
@@ -623,7 +623,7 @@ func TestGetContractReturns500WhenTheStoreFails(t *testing.T) {
 	const secret = "query timeout against replica 10.1.2.3"
 	srv := NewServer(log, fakeContracts{getFn: func(context.Context, string) (models.Contract, error) {
 		return models.Contract{}, errorString(secret)
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodGet, "/contracts/"+validContractID, "")
 
@@ -639,7 +639,7 @@ func TestDeleteContractReturns204(t *testing.T) {
 	srv := NewServer(nil, fakeContracts{deleteFn: func(_ context.Context, id string) error {
 		gotID = id
 		return nil
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodDelete, "/contracts/"+validContractID, "")
 
@@ -659,7 +659,7 @@ func TestDeleteContractReturns404WhenUntracked(t *testing.T) {
 
 	srv := NewServer(nil, fakeContracts{deleteFn: func(_ context.Context, id string) error {
 		return fmt.Errorf("store: contract %s: %w", id, store.ErrNotFound)
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodDelete, "/contracts/"+validContractID, "")
 
@@ -672,7 +672,7 @@ func TestDeleteContractRejectsAMalformedID(t *testing.T) {
 	srv := NewServer(nil, fakeContracts{deleteFn: func(context.Context, string) error {
 		t.Error("Delete reached the store despite a malformed id")
 		return nil
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodDelete, "/contracts/not-a-contract-id", "")
 
@@ -686,7 +686,7 @@ func TestDeleteContractReturns500WhenTheStoreFails(t *testing.T) {
 	const secret = "permission denied for table contracts as user pulsar_rw"
 	srv := NewServer(log, fakeContracts{deleteFn: func(context.Context, string) error {
 		return errorString(secret)
-	}}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3")
 
 	rr := serve(srv, http.MethodDelete, "/contracts/"+validContractID, "")
 

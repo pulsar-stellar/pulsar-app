@@ -30,6 +30,12 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/contracts/{id}", s.handleGetContract)
 	r.Delete("/contracts/{id}", s.handleDeleteContract)
 
+	// The events routes are registered flat for the same reason as the contract
+	// routes: the paths match the SDK's exactly. The list route is nested under a
+	// contract; the single-event route is top-level, keyed by the event's own id.
+	r.Get("/contracts/{id}/events", s.handleListEvents)
+	r.Get("/events/{id}", s.handleGetEvent)
+
 	// RequestLogger and Recoverer wrap the whole mux, not chi's Use stack: chi
 	// skips its Use middleware for the not-found path until a route is
 	// registered, so wrapping the mux is what applies them to every request,

@@ -20,6 +20,11 @@ type Server struct {
 	// the methods its handlers call.
 	contracts contractStore
 
+	// events backs the events read routes. Like contracts it is an interface
+	// defined at its point of use, so a handler test substitutes a fake and the
+	// package depends on the events store only through Query and Get.
+	events eventStore
+
 	// version is the build identifier /health reports. NewServer guarantees it
 	// is non-empty, since the SDK's health schema rejects an empty string.
 	version string
@@ -30,7 +35,7 @@ type Server struct {
 // discarding one so a handler never nil-panics, matching the poller's
 // constructor. An empty version becomes "dev", so an unstamped build still
 // reports a value the health schema accepts.
-func NewServer(log *slog.Logger, contracts contractStore, version string) *Server {
+func NewServer(log *slog.Logger, contracts contractStore, events eventStore, version string) *Server {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -40,6 +45,7 @@ func NewServer(log *slog.Logger, contracts contractStore, version string) *Serve
 	return &Server{
 		log:       logger.Component(log, logger.ComponentAPI),
 		contracts: contracts,
+		events:    events,
 		version:   version,
 	}
 }

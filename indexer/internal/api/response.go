@@ -17,13 +17,15 @@ import (
 )
 
 // dataEnvelope is the ADR-017 success wire shape. meta and next_cursor are
-// siblings of data, not nested inside it. next_cursor is deliberately absent
-// here: it belongs only to a paginated route and arrives with the events
-// handler, so a non-paginated response omits the field rather than sending a
-// null the SDK would have to treat as "no page".
+// siblings of data, not nested inside it. next_cursor is present only on a
+// paginated route: it is omitted, not sent as null, when a response carries no
+// page (either a non-paginated route or an exhausted page), so the SDK pages
+// until the field is absent per ADR-021. The field order matches the SDK's
+// EnvelopeSchema: data, then next_cursor, then meta.
 type dataEnvelope struct {
-	Data any   `json:"data"`
-	Meta *meta `json:"meta,omitempty"`
+	Data       any     `json:"data"`
+	NextCursor *string `json:"next_cursor,omitempty"`
+	Meta       *meta   `json:"meta,omitempty"`
 }
 
 // meta carries per-response metadata. took_ms is how long the handler spent
@@ -35,9 +37,19 @@ type meta struct {
 
 // writeData renders data as the ADR-017 success envelope at status, with
 // tookMs under meta.took_ms. It is the success counterpart to writeError; a
-// handler measures its own elapsed time and passes it here.
+// handler measures its own elapsed time and passes it here. It leaves
+// next_cursor absent, so it serves every non-paginated route.
 func writeData(w http.ResponseWriter, status int, data any, tookMs float64) {
 	writeJSON(w, status, dataEnvelope{Data: data, Meta: &meta{TookMs: tookMs}})
+}
+
+// writeDataPaged renders data as the ADR-017 success envelope with nextCursor as
+// a top-level sibling of data, for a paginated route. A nil nextCursor omits the
+// field, signalling an exhausted page; a non-nil one carries the cursor for the
+// next page. It is otherwise writeData: the events list handler uses it so the
+// SDK reads result.next_cursor beside result.data.
+func writeDataPaged(w http.ResponseWriter, status int, data any, nextCursor *string, tookMs float64) {
+	writeJSON(w, status, dataEnvelope{Data: data, NextCursor: nextCursor, Meta: &meta{TookMs: tookMs}})
 }
 
 // errorEnvelope is the ADR-017 error wire shape. error.code is the four-value

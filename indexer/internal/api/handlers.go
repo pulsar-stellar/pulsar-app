@@ -36,6 +36,15 @@ type contractStore interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// eventStore is the slice of the events store the api package's handlers use,
+// defined here where it is consumed so the package depends on the store only
+// through the two methods it calls and a test can substitute a fake without a
+// database. *store.Events satisfies it.
+type eventStore interface {
+	Query(ctx context.Context, q store.EventQuery) (store.EventsPage, error)
+	Get(ctx context.Context, id int64) (*models.Event, error)
+}
+
 // maxRegisterBodyBytes caps the registration body the handler will read. The
 // body is a single small JSON object, so the cap is generous while still
 // bounding what an abusive client can make the handler buffer.
@@ -48,6 +57,17 @@ const maxRegisterBodyBytes = 64 << 10 // 64 KiB
 // null, so the SDK always sees an array.
 type contractListPayload struct {
 	Items []models.Contract `json:"items"`
+}
+
+// eventListPayload is the GET /contracts/:id/events success body carried under
+// the envelope's data. The SDK's events() reads data.items, so the events sit
+// under an items key rather than as a bare array, mirroring contractListPayload
+// and matching the SDK's EventListPayloadSchema. Items is never nil on the wire:
+// a contract with no matching events serializes as [], not null, so the SDK
+// always sees an array. The next page's cursor rides beside data as the
+// envelope's next_cursor, not in this payload.
+type eventListPayload struct {
+	Items []*models.Event `json:"items"`
 }
 
 // elapsedMs is the milliseconds since start, the figure every handler reports
@@ -215,6 +235,142 @@ func (s *Server) handleDeleteContract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// parseEventQuery turns the events-list query string into a store.EventQuery,
+// validating every parameter at the boundary so a malformed value is a
+// catalogued 400 rather than a store error the handler would map to a 500. Each
+// validator mirrors one field of the SDK's EventQuerySchema; on the first
+// failure it returns the apierror the handler writes, naming the field that
+// failed. name and topic_contains are passed through raw: an empty value is
+// absent, which the store reads as no filter, and the SDK never sends an empty
+// one. contractID is the already-validated path id, set on the query so the
+// store scopes the read to that contract.
+func parseEventQuery(r *http.Request, contractID string) (store.EventQuery, *apierror.Error) {
+	params := r.URL.Query()
+
+	limit, err := validate.EventLimit(params.Get("limit"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationLimit, "The limit query parameter must be an integer between 1 and 500.")
+	}
+	order, err := validate.EventOrder(params.Get("order"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationOrder, "The order query parameter must be asc or desc.")
+	}
+	cursor, err := validate.EventCursor(params.Get("cursor"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationCursor, "The cursor query parameter must be an event id.")
+	}
+	fromLedger, err := validate.LedgerBound(params.Get("from_ledger"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationLedgerRange, "The from_ledger query parameter must be a non-negative integer.")
+	}
+	toLedger, err := validate.LedgerBound(params.Get("to_ledger"))
+	if err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationLedgerRange, "The to_ledger query parameter must be a non-negative integer.")
+	}
+	if err := validate.LedgerRange(fromLedger, toLedger); err != nil {
+		return store.EventQuery{}, apierror.New(apierror.CodeValidationLedgerRange, "The from_ledger query parameter must not be greater than to_ledger.")
+	}
+
+	return store.EventQuery{
+		ContractID:    contractID,
+		Name:          params.Get("name"),
+		FromLedger:    fromLedger,
+		ToLedger:      toLedger,
+		Limit:         limit,
+		Cursor:        cursor,
+		Order:         order,
+		TopicContains: params.Get("topic_contains"),
+	}, nil
+}
+
+// handleListEvents answers GET /contracts/:id/events with one page of a
+// contract's events under the envelope's data.items and the next page's cursor
+// as the sibling next_cursor, per ADR-017 and ADR-021. The path id is validated
+// first, then the query parameters, then the contract's existence: a query
+// against a contract the indexer is not tracking is a 404 NOT_FOUND_CONTRACT,
+// not an empty page, so the SDK distinguishes "untracked" from "tracked with no
+// matches" (ADR-021), which is why the list handler reads both stores. A tracked
+// contract with no matching events is a 200 with an empty items array. A store
+// failure, on either read, is a 500 with the cause logged server-side against
+// this request and kept out of the response.
+func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
+	id := chi.URLParam(r, "id")
+	if err := validate.ContractID(id); err != nil {
+		writeError(w, apierror.New(apierror.CodeValidationContractID, "The contract ID is not a well-formed Soroban contract ID."))
+		return
+	}
+
+	query, apiErr := parseEventQuery(r, id)
+	if apiErr != nil {
+		writeError(w, apiErr)
+		return
+	}
+
+	if _, err := s.contracts.Get(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, apierror.New(apierror.CodeNotFoundContract, "The indexer is not tracking this contract."))
+			return
+		}
+		s.log.ErrorContext(r.Context(), "events_contract_get_failed",
+			"request_id", RequestIDFromContext(r.Context()),
+			"error", err.Error(),
+		)
+		writeError(w, apierror.New(apierror.CodeInternalStore, "The indexer could not read the contract."))
+		return
+	}
+
+	page, err := s.events.Query(r.Context(), query)
+	if err != nil {
+		s.log.ErrorContext(r.Context(), "events_query_failed",
+			"request_id", RequestIDFromContext(r.Context()),
+			"error", err.Error(),
+		)
+		writeError(w, apierror.New(apierror.CodeInternalStore, "The indexer could not read the contract's events."))
+		return
+	}
+	// The real store always returns a non-nil slice, but a nil one would
+	// serialize as items:null and break the SDK's EventListPayloadSchema, so it
+	// is coerced to an empty array here rather than trusted from the store.
+	if page.Events == nil {
+		page.Events = []*models.Event{}
+	}
+	writeDataPaged(w, http.StatusOK, eventListPayload{Items: page.Events}, page.NextCursor, elapsedMs(start))
+}
+
+// handleGetEvent answers GET /events/:id with a single event directly under the
+// envelope's data, not wrapped in an items list, so the SDK's event() reads the
+// record straight from data. The path id is validated first: a non-numeric or
+// out-of-range id is a 400 VALIDATION_EVENT_ID, distinct from a well-formed id
+// that finds nothing, which is a 404 NOT_FOUND_EVENT carrying the structured
+// absence signal the SDK maps to null. A store failure other than absence is a
+// 500 with the cause logged server-side and kept out of the response.
+func (s *Server) handleGetEvent(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
+	id, err := validate.EventID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, apierror.New(apierror.CodeValidationEventID, "The event ID must be a non-negative integer."))
+		return
+	}
+
+	event, err := s.events.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, apierror.New(apierror.CodeNotFoundEvent, "No event has this ID."))
+			return
+		}
+		s.log.ErrorContext(r.Context(), "event_get_failed",
+			"request_id", RequestIDFromContext(r.Context()),
+			"error", err.Error(),
+		)
+		writeError(w, apierror.New(apierror.CodeInternalStore, "The indexer could not read the event."))
+		return
+	}
+	writeData(w, http.StatusOK, event, elapsedMs(start))
 }
 
 // handleMethodNotAllowed answers a request whose path exists but whose method

@@ -12,7 +12,7 @@ import (
 func TestRouterUnknownRouteReturnsNotFoundEnvelope(t *testing.T) {
 	t.Parallel()
 
-	srv := NewServer(nil, fakeContracts{}, "test") // discard logger; asserts the HTTP contract only
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "test") // discard logger; asserts the HTTP contract only
 	rr := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/does-not-exist", nil))
 
@@ -66,7 +66,7 @@ func TestRouterAppliesMiddlewareToNotFound(t *testing.T) {
 func TestRouterWrongMethodReturnsMethodNotAllowedEnvelope(t *testing.T) {
 	t.Parallel()
 
-	srv := NewServer(nil, fakeContracts{}, "test")
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "test")
 	rr := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/health", nil))
 
