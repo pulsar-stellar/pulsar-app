@@ -3,6 +3,8 @@ package api
 import (
 	"log/slog"
 
+	graphql "github.com/graph-gophers/graphql-go"
+
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/logger"
 )
 
@@ -28,6 +30,11 @@ type Server struct {
 	// version is the build identifier /health reports. NewServer guarantees it
 	// is non-empty, since the SDK's health schema rejects an empty string.
 	version string
+
+	// schema is the parsed GraphQL schema the /graphql handler executes. It is
+	// built once in NewServer, closing over this Server so its resolvers reach
+	// the same stores as the REST handlers, and is safe for concurrent use.
+	schema *graphql.Schema
 }
 
 // NewServer builds a Server. log is the base logger; NewServer scopes it to the
@@ -42,10 +49,14 @@ func NewServer(log *slog.Logger, contracts contractStore, events eventStore, ver
 	if version == "" {
 		version = "dev"
 	}
-	return &Server{
+	s := &Server{
 		log:       logger.Component(log, logger.ComponentAPI),
 		contracts: contracts,
 		events:    events,
 		version:   version,
 	}
+	// The GraphQL schema closes over the fully built Server, so it is parsed
+	// after the struct is assembled rather than in the literal above.
+	s.schema = newGraphQLSchema(s)
+	return s
 }

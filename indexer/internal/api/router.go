@@ -36,6 +36,12 @@ func (s *Server) Routes() http.Handler {
 	r.Get("/contracts/{id}/events", s.handleListEvents)
 	r.Get("/events/{id}", s.handleGetEvent)
 
+	// The GraphQL read surface is a single POST endpoint over the same data, with
+	// nesting the REST routes cannot express (ADR-043). It is registered after the
+	// REST routes so it too is wrapped by the middleware below, inheriting request
+	// logging, panic recovery, and the request id.
+	r.Post("/graphql", s.handleGraphQL)
+
 	// RequestLogger and Recoverer wrap the whole mux, not chi's Use stack: chi
 	// skips its Use middleware for the not-found path until a route is
 	// registered, so wrapping the mux is what applies them to every request,
