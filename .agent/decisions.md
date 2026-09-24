@@ -1540,3 +1540,98 @@ Both faults sit outside the SDK and indexer wire surface, but they block the con
 - ci-web still does not run on a pull request that touches neither `apps/web/**` nor `packages/sdk/**`, which is correct because it is not required.
 - GitHub's first-time-contributor approval gate is unchanged: a maintainer still approves the first workflow run for a new or forked contributor. That is an intentional GitHub safeguard, not part of this decision.
 - This ADR records a fix already applied, because it was repairing the CI system itself. The workflow half shipped in commit `93bf71d` on `main`, where ci-go then ran and passed. The ruleset half corrected the two contexts to the bare job names on the `main-protection` ruleset through the REST API, verified live with all five rules intact, enforcement active, and the admin bypass retained. This PR is the first change to flow through the corrected gate.
+
+---
+
+## ADR-041: The events read API pages newest-first over an id keyset, filters topics by literal substring, and the store carries its dialect
+Date: 2026-09-24
+Status: accepted
+
+### Context
+
+Step 68 builds the two events read routes the published `@pulsar-stellar/sdk@0.1.0-app` already calls: `GET /contracts/{id}/events` and `GET /events/{id}`. Their wire contract is fixed from the SDK side, the discipline ADR-017 set: `client.events(id, q)` sends `name`, `from_ledger`, `to_ledger`, `topic_contains`, `limit`, `cursor`, and `order`, and reads `{ data: { items: [...] }, next_cursor }`; `client.event(id)` reads the event directly under `data` and returns null on a 404 carrying `not_found`.
+
+The events store already paged ascending over an id keyset and looked up a single event, but it had neither of the two dimensions the SDK's `EventQuerySchema` adds over the store's original filters: `order`, which defaults to `desc`, and `topic_contains`. Settling the routes against the published contract meant deciding several coupled questions at once, two of which, the topic-filter semantics and the page-size ceiling, were confirmed with the maintainer before the work began.
+
+The topic filter carried a live contradiction. Migration 0002 created a GIN index `idx_events_topics` oriented toward JSON containment, which reads as an intent to match a whole topic value. The SDK shipped `topic_contains` with text describing a substring match, and the SDK is the published contract. The two cannot both be honoured; one has to give.
+
+The two engines also spell a JSON substring test differently, and CI runs the live store suite against SQLite only. A Postgres-only SQL fragment would ship with no automated proof it is even well-formed unless the query builder were made testable without a live Postgres.
+
+### Decision
+
+**Order and the id keyset.** `Query` orders by emission order `(ledger, event_index)` with the id as the final tiebreak, ascending or descending as the query asks. The keyset stays the bare id: `id > cursor` resuming an ascending page, `id < cursor` resuming a descending one, with the matching `ORDER BY ... [DESC]`. The id is a sound proxy for `(ledger, event_index)` because the poller inserts in emission order per ADR-022, so id ascends with the composite key; the ascending path already relied on this, and the descending path inherits the same invariant. `NextCursor` is unchanged: fetch `limit+1`, and when the extra row is present, trim to `limit` and set the cursor from the last kept id.
+
+**Two defaults for `order`, by layer.** The store's `EventQuery.Order` treats the zero value `""` as ascending, so every existing store caller and test keeps its behaviour; `"asc"` and `"desc"` are explicit and anything else is an error. The HTTP layer defaults an absent `order` to `desc`, matching the SDK's schema, and always passes an explicit `"asc"` or `"desc"` to the store, so the store's own ascending default is never exercised on the HTTP path but is preserved for a direct caller. The divergence is deliberate: the wire default is newest-first because that is what a browser of recent activity wants, while the store's structural default stays the cheaper ascending scan.
+
+**`topic_contains` is a literal, case-sensitive substring** over the `value` of every decoded topic, resolving the contradiction toward the published SDK contract rather than the migration-0002 index intent. Each engine gets the fragment it can run, parameterized on the search term and guarded by an array-type check so a `topics_json` holding the scalar JSON null that `jsonOrNull` writes for a topicless event matches nothing rather than raising:
+
+- Postgres: `jsonb_typeof(topics_json) = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements(topics_json) AS t WHERE strpos(t->>'value', $N) > 0)`
+- SQLite: `json_type(topics_json) = 'array' AND EXISTS (SELECT 1 FROM json_each(topics_json) WHERE instr(json_extract(json_each.value, '$.value'), $N) > 0)`
+
+`strpos` and `instr` are used rather than `LIKE`, so `%` and `_` in a search term are ordinary characters and no wildcard escaping is needed. The GIN index `idx_events_topics` does not serve this substring scan; it is left in place, unused by this query, and a trigram index that would serve it is deferred, not part of step 68.
+
+**The HTTP `limit` ceiling is 500**, mirroring the SDK's `EVENT_QUERY_MAX_LIMIT`, validated at the boundary. The store keeps its own 10000 ceiling, the Soroban RPC page cap of ADR-028. The HTTP ceiling sits below the store's on purpose, so the read surface can never ask the store for a page larger than the SDK itself would request.
+
+**The store carries its dialect.** `NewEvents(q Querier, dialect Dialect)` takes the engine as a required argument, and `Query` reads `e.dialect` to choose the topic fragment. `Dialect` is a store-local enum (`DialectSQLite` as the zero value, `DialectPostgres`), so the store keeps importing only `models` and the standard library and gains no edge to the `db` package. `buildEventsQuery(q, dialect, limit)` is a pure function split out of `Query` that returns the SQL string and its argument list, which is what lets the Postgres fragment be asserted by a construction test with no live Postgres.
+
+**New catalog codes.** The handlers register `VALIDATION_LIMIT`, `VALIDATION_CURSOR`, `VALIDATION_ORDER`, `VALIDATION_LEDGER_RANGE`, and `VALIDATION_EVENT_ID` (each `validation`/400) and `NOT_FOUND_EVENT` (`not_found`/404), and reuse `VALIDATION_CONTRACT_ID`, `NOT_FOUND_CONTRACT`, and `INTERNAL_STORE`. Each is registered because a shipped handler returns it, per ADR-037. A malformed `from_ledger` bound and an inverted `from_ledger`/`to_ledger` window are distinct failures that share the one `VALIDATION_LEDGER_RANGE` code, distinguished by message rather than by code.
+
+### Alternatives considered
+
+**A `WithDialect` builder leaving `NewEvents(q)` untouched.** Rejected. It keeps the old constructor working, but it makes `Query`'s topic behaviour depend on how the store was built: a store constructed the old way would carry the zero-value dialect silently, and a Postgres deployment that forgot the builder call would run the SQLite fragment against Postgres with no compile error. Requiring the dialect at construction makes every `Events` unconditionally know its engine and turns a forgotten call into a changed signature the compiler catches.
+
+**Honour migration 0002's containment intent instead of the SDK's substring text.** Rejected. The SDK is the published contract, and `topic_contains` is documented and shipped as a substring match; a containment or equality filter would be a different, narrower operation under the same parameter name, silently returning fewer results than a 0.1.0 client expects. The index intent is the weaker signal here, and the cost of overriding it is an unused index, not a wire break.
+
+**A composite `(ledger, event_index)` cursor rather than the bare id.** Rejected as unnecessary for step 68. It is strictly more machinery, and it buys nothing while the id-ascends-with-emission-order invariant of ADR-022 holds. Were the poller ever to insert out of emission order, both the existing ascending path and this new descending one would need revisiting together, and that is the moment to widen the cursor, recorded here so the coupling is not forgotten.
+
+**Add a trigram index now so `topic_contains` uses an index.** Rejected as out of scope. The showcase-scale event volume does not need it, the substring scan is correct without it, and adding an index is a migration with its own review. It is deferred, not refused.
+
+**Skip the Postgres fragment until a live Postgres CI service exists.** Rejected. The SDK will call this route against a Postgres deployment, so the fragment has to ship; leaving it out would mean the primary production engine has no topic filter at all. The construction test proves the fragment is well-formed and binds its term as a parameter, which is the guarantee available without a live Postgres, and the live SQLite suite exercises the SQLite fragment end to end.
+
+### Consequences
+
+- `EventQuery` gains `Order` and `TopicContains`; `NewEvents` gains its `dialect` argument. The one non-test caller that constructs an events store, the poller's commit path, passes the dialect resolved from the database driver kind; no other production caller exists yet, since the HTTP server is not mounted in `main.go` until step 72.
+- `GET /contracts/{id}/events` validates the path id, then every query parameter at the boundary, then confirms the contract is tracked before reading events: an untracked contract is a 404 `NOT_FOUND_CONTRACT` per ADR-021, not an empty page, which is why the list handler reads both the contract and the events stores. A tracked contract with no matching events is a 200 with an empty `items` array, never null.
+- `next_cursor` rides beside `data` as a top-level envelope sibling, present only when another page exists and omitted, not sent as null, when the page is exhausted, so the SDK pages until the field is absent.
+- `GET /events/{id}` returns the event directly under `data`; a malformed id is a 400 `VALIDATION_EVENT_ID`, distinct from a well-formed id that finds nothing, which is a 404 `NOT_FOUND_EVENT` so the SDK's `event()` returns null.
+- The Postgres `topic_contains` fragment is covered by a `buildEventsQuery` construction test rather than a live query, because CI runs the store suite against SQLite only. A live Postgres CI service is a separate follow-up, not gated on this work.
+- The `idx_events_topics` GIN index is now known to be unused by the shipped query. It is retained rather than dropped so a future trigram-or-containment decision starts from the migration already present, and this ADR is the record of why it does not serve the current filter.
+- No published SDK behaviour changes: the routes implement the contract `@pulsar-stellar/sdk@0.1.0-app` already encodes, so the SDK's `events()` and `event()` work end to end against a live indexer for the first time.
+
+## ADR-042: The events list validates its name and topic_contains filters for storable UTF-8
+Date: 2026-09-24
+Status: accepted
+
+### Context
+
+A security review of the events read surface built in step 68 (ADR-041) found one boundary gap. Every numeric and enum query parameter of `GET /contracts/{id}/events` was validated before the request reached the store, but the two free-text filters, `name` and `topic_contains`, were passed through raw on the reasoning that an empty value is absent and the store matches any non-empty value literally. That is true for well-formed text, but it is not the whole input space. Postgres `text` cannot hold a NUL byte or an invalid UTF-8 sequence, so a request carrying `name=%00` or an invalid-UTF-8 `topic_contains` would pass the handler, reach the store, and fail there. A client mistake would surface as a 500 `INTERNAL_STORE`, the class reserved for the indexer's own faults, rather than the 400 a malformed request deserves. This also crossed a standing rule: validate all user input at the boundary and fail fast, which step 68's own validation layer had applied to every other parameter.
+
+The SDK's `EventQuerySchema` constrains both fields only as `z.string().min(1).optional()`: a non-empty string, with no maximum length and no character class. So the fix had to reject what the store cannot store without narrowing what the published contract allows.
+
+### Decision
+
+**Both free-text filters are validated for shape at the boundary.** A new `validate.EventFilterText` is applied to `name` and to `topic_contains` in `parseEventQuery`, before the `store.EventQuery` is assembled. An empty value returns the empty string unchanged: it stays absent, the no-filter reading the store already gives it and the value the SDK omits rather than transmits, so an unfiltered page remains a valid request. A non-empty value must be valid UTF-8 (`utf8.ValidString`) and must contain no NUL byte (`strings.IndexByte(raw, 0) < 0`); anything else is `ErrFilterText`, which the handler maps to a 400.
+
+**No minimum or maximum length is imposed.** The check is exactly "storable UTF-8 or absent" and nothing narrower. Enforcing the SDK's `min(1)` at the indexer would reject an empty value that the indexer deliberately reads as absent, and imposing a maximum length would invent a limit the published contract does not carry. The store matches the term literally, so no charset or escaping constraint is needed either. The validator's job is only to keep a value the storage engine cannot represent from reaching it as a 500.
+
+**One shared catalog code, `VALIDATION_FILTER`** (`validation`/400), covers both fields, since their shape rule is identical. This follows the `VALIDATION_LEDGER_RANGE` precedent from ADR-041, where `from_ledger` and `to_ledger` share one code and the message names the offending field. Registering a new code is a wire-contract change the apierror package's own rule requires an ADR for, which is the immediate reason this decision is recorded rather than folded silently into ADR-041.
+
+### Alternatives considered
+
+**Reject the malformed value at the store instead.** Rejected. The store returning an error for un-storable input is a correct backstop, but on its own it classifies a client mistake as an internal fault: the envelope would carry `internal`/500, and the failure would be logged as an indexer error. Validation belongs at the boundary, where every other parameter is already checked, so the class reflects whose mistake it was.
+
+**Enforce the SDK's `min(1)` so an empty filter is a 400.** Rejected. The indexer treats an empty filter as absent by design, the same thing the SDK expresses by omitting the field; turning that into an error would reject a legitimate unfiltered page and diverge from the store's own reading of the zero value.
+
+**Impose a maximum filter length.** Rejected. The SDK schema sets none, so a ceiling here would reject input the published contract permits. A length bound is a denial-of-service concern better addressed uniformly at the server layer (request size, statement timeout) than by a guess baked into one validator.
+
+**A separate code per field (`VALIDATION_NAME`, `VALIDATION_TOPIC_CONTAINS`).** Rejected. The two fields fail for exactly the same reason, and the message already names the field, so two codes would add wire surface without adding signal, against the shared-code precedent ADR-041 set for the ledger bounds.
+
+### Consequences
+
+- `parseEventQuery` now validates `name` and `topic_contains` alongside the numeric and enum parameters; a malformed filter is a 400 `VALIDATION_FILTER` naming the field, never a 500. The store still receives only storable text.
+- The catalog gains `VALIDATION_FILTER`. The wire class set of ADR-017 is unchanged, and no existing code's meaning moves; a 0.1.0 client that never sends a malformed filter sees no behavioural change.
+- Empty stays absent: this ADR does not change the empty-value semantics ADR-041 relied on, it only constrains the non-empty case.
+- Follow-ups carried forward from the same review, none of which gate step 68:
+  - A `statement_timeout` (or equivalent read deadline) belongs with the `http.Server` wiring at step 72, where the server and its context deadlines are configured; it is the general remedy for a slow or oversized read, of which an unbounded substring scan is one case, and is out of place in a per-parameter validator.
+  - The trigram index that would serve the `topic_contains` scan on Postgres stays deferred per ADR-041; the substring filter is correct without it at showcase scale.
+  - A Postgres integration test exercising the `topic_contains` array guard against a live engine remains the open follow-up ADR-041 recorded, still gated on a Postgres CI service.

@@ -125,6 +125,7 @@ func newPoller(t *testing.T, caller Caller, handle *sql.DB) *Poller {
 		decoder.New(),
 		handle,
 		store.NewContracts(handle),
+		store.DialectSQLite,
 		10*time.Millisecond,
 		100,
 		nil,
@@ -174,7 +175,7 @@ func storedEvents(t *testing.T, handle *sql.DB) []*models.Event {
 	t.Helper()
 	// A high limit so the read-back is one page: the default page size is 100,
 	// and a paging test stores more than that.
-	page, err := store.NewEvents(handle).Query(context.Background(), store.EventQuery{ContractID: showcase, Limit: 5000})
+	page, err := store.NewEvents(handle, store.DialectSQLite).Query(context.Background(), store.EventQuery{ContractID: showcase, Limit: 5000})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}

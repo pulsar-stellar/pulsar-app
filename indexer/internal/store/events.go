@@ -23,10 +23,15 @@ const defaultPageSize = 100
 // Events reads and writes the events table.
 type Events struct {
 	q Querier
+	// dialect selects the SQL for the one query that cannot be written once for
+	// both engines, topic_contains. Insert and Get are portable and ignore it.
+	dialect Dialect
 }
 
-// NewEvents builds a store over a database handle or a transaction.
-func NewEvents(q Querier) *Events { return &Events{q: q} }
+// NewEvents builds a store over a database handle or a transaction. The dialect
+// is required rather than optional so every Events unconditionally knows its
+// engine, and Query never has to branch on a maybe-unset value. See ADR-041.
+func NewEvents(q Querier, dialect Dialect) *Events { return &Events{q: q, dialect: dialect} }
 
 const eventColumns = `id, contract_id, ledger, tx_hash, event_index, name,
 	topics_json, data_json, raw_topics, raw_data, emitted_at, in_successful_contract_call`
@@ -43,7 +48,7 @@ type EventsPage struct {
 }
 
 // EventQuery filters a page of events. A zero value asks for the first page of
-// every event on a contract, newest last.
+// every event on a contract in ascending emission order.
 type EventQuery struct {
 	ContractID string
 	Name       string
@@ -51,6 +56,15 @@ type EventQuery struct {
 	ToLedger   int64
 	Limit      int
 	Cursor     string
+
+	// Order is "asc", "desc", or "" for the ascending default. The store
+	// defaults to ascending to preserve its existing callers; the HTTP layer
+	// defaults to descending to match the SDK. See ADR-041.
+	Order string
+
+	// TopicContains, when set, keeps only events with a decoded topic whose
+	// value contains it as a literal, case-sensitive substring. See ADR-041.
+	TopicContains string
 }
 
 // Insert writes a batch of events in one statement.
@@ -143,60 +157,20 @@ func (e *Events) Get(ctx context.Context, id int64) (*models.Event, error) {
 	return event, nil
 }
 
-// Query returns one page of a contract's events, oldest first, with the cursor
-// for the next page.
-//
-// Ordering is by (ledger, event_index), which is the global emission order per
-// ADR-022, with the id as a final tiebreak so the order is total and paging
-// cannot skip or repeat a row.
+// Query returns one page of a contract's events with the cursor for the next
+// page. Ordering is by emission order (ledger, event_index) per ADR-022, with
+// the id as a final tiebreak, ascending by default or descending when the
+// query asks. See ADR-041 for the descending keyset.
 func (e *Events) Query(ctx context.Context, q EventQuery) (EventsPage, error) {
-	if q.ContractID == "" {
-		return EventsPage{}, errors.New("store: a contract id is required")
+	limit, err := resolvePageSize(q.Limit)
+	if err != nil {
+		return EventsPage{}, err
 	}
 
-	limit := q.Limit
-	switch {
-	case limit == 0:
-		limit = defaultPageSize
-	case limit < 0:
-		return EventsPage{}, fmt.Errorf("store: limit %d is negative", limit)
-	case limit > maxPageSize:
-		return EventsPage{}, fmt.Errorf("store: limit %d exceeds the %d ceiling", limit, maxPageSize)
+	query, args, err := buildEventsQuery(q, e.dialect, limit)
+	if err != nil {
+		return EventsPage{}, err
 	}
-
-	conditions := []string{"contract_id = $1"}
-	args := []any{q.ContractID}
-
-	add := func(clause string, value any) {
-		args = append(args, value)
-		conditions = append(conditions, fmt.Sprintf(clause, len(args)))
-	}
-
-	if q.Name != "" {
-		add("name = $%d", q.Name)
-	}
-	if q.FromLedger > 0 {
-		add("ledger >= $%d", q.FromLedger)
-	}
-	if q.ToLedger > 0 {
-		add("ledger <= $%d", q.ToLedger)
-	}
-	if q.Cursor != "" {
-		after, err := parseCursor(q.Cursor)
-		if err != nil {
-			return EventsPage{}, err
-		}
-		add("id > $%d", after)
-	}
-
-	// One row beyond the page tells us whether another page exists, without a
-	// second count query that could disagree with this one under concurrent
-	// writes.
-	args = append(args, limit+1)
-
-	query := `SELECT ` + eventColumns + ` FROM events WHERE ` +
-		strings.Join(conditions, " AND ") +
-		` ORDER BY ledger, event_index, id LIMIT $` + strconv.Itoa(len(args))
 
 	rows, err := e.q.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -223,6 +197,125 @@ func (e *Events) Query(ctx context.Context, q EventQuery) (EventsPage, error) {
 		page.NextCursor = &cursor
 	}
 	return page, nil
+}
+
+// resolvePageSize turns a requested limit into the page size to fetch. Zero
+// asks for the default; a negative or over-ceiling limit is an error. The
+// ceiling is the RPC page cap per ADR-028, so no caller can ask this API for a
+// page the upstream could not have produced.
+func resolvePageSize(limit int) (int, error) {
+	switch {
+	case limit == 0:
+		return defaultPageSize, nil
+	case limit < 0:
+		return 0, fmt.Errorf("store: limit %d is negative", limit)
+	case limit > maxPageSize:
+		return 0, fmt.Errorf("store: limit %d exceeds the %d ceiling", limit, maxPageSize)
+	default:
+		return limit, nil
+	}
+}
+
+// buildEventsQuery assembles the SELECT for one page, parameterizing every
+// value, and returns it with its argument list. It is pure and separate from
+// Query so the per-dialect topic_contains SQL can be asserted without a live
+// database of that engine, which the live suite does not have for Postgres.
+//
+// The limit is bound as limit+1: one row beyond the page tells Query whether
+// another page exists without a second count query that could disagree under
+// concurrent writes.
+func buildEventsQuery(q EventQuery, dialect Dialect, limit int) (string, []any, error) {
+	if q.ContractID == "" {
+		return "", nil, errors.New("store: a contract id is required")
+	}
+	if dialect != DialectSQLite && dialect != DialectPostgres {
+		return "", nil, fmt.Errorf("store: unknown dialect %s", dialect)
+	}
+	ascending, err := orderIsAscending(q.Order)
+	if err != nil {
+		return "", nil, err
+	}
+
+	conditions := []string{"contract_id = $1"}
+	args := []any{q.ContractID}
+
+	add := func(clause string, value any) {
+		args = append(args, value)
+		conditions = append(conditions, fmt.Sprintf(clause, len(args)))
+	}
+
+	if q.Name != "" {
+		add("name = $%d", q.Name)
+	}
+	if q.FromLedger > 0 {
+		add("ledger >= $%d", q.FromLedger)
+	}
+	if q.ToLedger > 0 {
+		add("ledger <= $%d", q.ToLedger)
+	}
+	if q.TopicContains != "" {
+		args = append(args, q.TopicContains)
+		conditions = append(conditions, topicContainsClause(dialect, len(args)))
+	}
+	if q.Cursor != "" {
+		after, err := parseCursor(q.Cursor)
+		if err != nil {
+			return "", nil, err
+		}
+		// The id keyset is a valid proxy for (ledger, event_index) because the
+		// poller inserts in emission order, so id ascends with it. Ascending
+		// resumes after the cursor, descending before it. See ADR-041.
+		if ascending {
+			add("id > $%d", after)
+		} else {
+			add("id < $%d", after)
+		}
+	}
+
+	args = append(args, limit+1)
+
+	order := "ORDER BY ledger, event_index, id"
+	if !ascending {
+		order = "ORDER BY ledger DESC, event_index DESC, id DESC"
+	}
+
+	query := `SELECT ` + eventColumns + ` FROM events WHERE ` +
+		strings.Join(conditions, " AND ") + ` ` + order +
+		` LIMIT $` + strconv.Itoa(len(args))
+	return query, args, nil
+}
+
+// orderIsAscending reads the query's order. The empty string is the ascending
+// default; "asc" and "desc" are explicit; anything else is an error. The match
+// is case-sensitive to mirror the SDK's lowercase enum.
+func orderIsAscending(order string) (bool, error) {
+	switch order {
+	case "", "asc":
+		return true, nil
+	case "desc":
+		return false, nil
+	default:
+		return false, fmt.Errorf("store: order %q is not one of asc or desc", order)
+	}
+}
+
+// topicContainsClause is the one query fragment the two engines spell
+// differently. Both do a literal, case-sensitive substring test (strpos and
+// instr, not LIKE, so % and _ are ordinary characters) over the value of every
+// topic in the array. Each is guarded by an array-type check: a topics_json
+// that is the scalar JSON null, which jsonOrNull writes for an event with no
+// topics, would otherwise make Postgres' jsonb_array_elements raise rather than
+// match nothing. The GIN index from migration 0002 does not serve this scan; a
+// trigram index would, and is deferred. See ADR-041.
+func topicContainsClause(dialect Dialect, n int) string {
+	switch dialect {
+	case DialectPostgres:
+		return fmt.Sprintf(
+			`(jsonb_typeof(topics_json) = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements(topics_json) AS t WHERE strpos(t->>'value', $%d) > 0))`, n)
+	default:
+		return fmt.Sprintf(
+			`(json_type(topics_json) = 'array' AND EXISTS (SELECT 1 FROM json_each(topics_json) WHERE instr(json_extract(json_each.value, '$.value'), $%d) > 0))`, n)
+	}
 }
 
 // formatCursor renders an event id as a cursor. The cursor is the id, as a

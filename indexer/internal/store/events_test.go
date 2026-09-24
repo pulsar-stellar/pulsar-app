@@ -22,7 +22,7 @@ func eventsStore(t *testing.T) (*store.Events, *store.Contracts, *sql.DB) {
 	if _, err := contracts.Register(context.Background(), showcase); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	return store.NewEvents(handle), contracts, handle
+	return store.NewEvents(handle, store.DialectSQLite), contracts, handle
 }
 
 func newEvent(ledger, ordinal int64, name string) *models.Event {
@@ -570,7 +570,7 @@ func TestEventMethodsWrapADatabaseFailure(t *testing.T) {
 	t.Parallel()
 
 	handle := unmigrated(t)
-	events := store.NewEvents(handle)
+	events := store.NewEvents(handle, store.DialectSQLite)
 	ctx := context.Background()
 
 	cases := []struct {
@@ -621,7 +621,7 @@ func TestEventsAndProgressCommitTogether(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if _, err := store.NewEvents(tx).Insert(ctx, []*models.Event{newEvent(4430000, 0, "transfer")}); err != nil {
+	if _, err := store.NewEvents(tx, store.DialectSQLite).Insert(ctx, []*models.Event{newEvent(4430000, 0, "transfer")}); err != nil {
 		t.Fatalf("Insert in a transaction: %v", err)
 	}
 	if err := store.NewContracts(tx).SetProgress(ctx, showcase, 4430000); err != nil {
@@ -631,7 +631,7 @@ func TestEventsAndProgressCommitTogether(t *testing.T) {
 		t.Fatalf("Rollback: %v", err)
 	}
 
-	page, err := store.NewEvents(handle).Query(ctx, store.EventQuery{ContractID: showcase})
+	page, err := store.NewEvents(handle, store.DialectSQLite).Query(ctx, store.EventQuery{ContractID: showcase})
 	if err != nil {
 		t.Fatalf("Query: %v", err)
 	}
@@ -696,5 +696,214 @@ func TestCursorIsTheEventIDAsDigits(t *testing.T) {
 	}
 	if *page.NextCursor != strconv.FormatInt(page.Events[0].ID, 10) {
 		t.Errorf("NextCursor = %q, want the last event's id %d", *page.NextCursor, page.Events[0].ID)
+	}
+}
+
+// --- descending order (ADR-041) ---
+
+// The store defaults to ascending, but the SDK asks for newest first. Order
+// "desc" reverses the emission order, while the zero value stays ascending so
+// every existing caller is unaffected.
+func TestQueryDescendingOrderReturnsNewestFirst(t *testing.T) {
+	t.Parallel()
+
+	events, _, _ := eventsStore(t)
+	seed(t, events,
+		newEvent(4430002, 2, "third"),
+		newEvent(4430000, 1, "second"),
+		newEvent(4430000, 0, "first"),
+	)
+
+	page, err := events.Query(context.Background(), store.EventQuery{ContractID: showcase, Order: "desc"})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+
+	want := []string{"third", "second", "first"}
+	if len(page.Events) != len(want) {
+		t.Fatalf("got %d events, want %d", len(page.Events), len(want))
+	}
+	for i, name := range want {
+		if page.Events[i].Name != name {
+			t.Errorf("event %d is %q, want %q", i, page.Events[i].Name, name)
+		}
+	}
+}
+
+// Descending paging must walk every event exactly once with strictly
+// descending ids, the mirror of the ascending keyset, and stop cleanly on the
+// last page. The id keyset is a valid proxy for (ledger, event_index) because
+// the poller inserts in emission order; this test seeds in that order too.
+func TestDescendingPagingWalksEveryEventExactlyOnce(t *testing.T) {
+	t.Parallel()
+
+	events, _, _ := eventsStore(t)
+	ctx := context.Background()
+
+	const total = 25
+	batch := make([]*models.Event, 0, total)
+	for i := 0; i < total; i++ {
+		batch = append(batch, newEvent(4430000+int64(i/3), int64(i), "transfer"))
+	}
+	seed(t, events, batch...)
+
+	seen := map[int64]bool{}
+	var order []int64
+	cursor := ""
+	pages := 0
+
+	for {
+		page, err := events.Query(ctx, store.EventQuery{ContractID: showcase, Order: "desc", Limit: 7, Cursor: cursor})
+		if err != nil {
+			t.Fatalf("page %d: %v", pages, err)
+		}
+		pages++
+		if pages > 10 {
+			t.Fatal("paging did not terminate")
+		}
+
+		for _, event := range page.Events {
+			if seen[event.ID] {
+				t.Errorf("event %d appeared on more than one page", event.ID)
+			}
+			seen[event.ID] = true
+			order = append(order, event.ID)
+		}
+
+		if page.NextCursor == nil {
+			break
+		}
+		if *page.NextCursor == "" {
+			t.Fatal("NextCursor is a pointer to an empty string; exhaustion must be nil")
+		}
+		cursor = *page.NextCursor
+	}
+
+	if len(seen) != total {
+		t.Errorf("paging saw %d events, want %d", len(seen), total)
+	}
+	if pages != 4 {
+		t.Errorf("paging took %d pages, want 4 for %d events at 7 per page", pages, total)
+	}
+	for i := 1; i < len(order); i++ {
+		if order[i] >= order[i-1] {
+			t.Errorf("descending paging returned ids out of order at %d: %v", i, order)
+			break
+		}
+	}
+}
+
+// The last full descending page must not claim another page exists, the mirror
+// of the ascending exhaustion case.
+func TestDescendingExactlyFullPageReportsExhaustion(t *testing.T) {
+	t.Parallel()
+
+	events, _, _ := eventsStore(t)
+	ctx := context.Background()
+
+	batch := make([]*models.Event, 0, 10)
+	for i := 0; i < 10; i++ {
+		batch = append(batch, newEvent(4430000, int64(i), "transfer"))
+	}
+	seed(t, events, batch...)
+
+	page, err := events.Query(ctx, store.EventQuery{ContractID: showcase, Order: "desc", Limit: 10})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 10 {
+		t.Fatalf("got %d events, want 10", len(page.Events))
+	}
+	if page.NextCursor != nil {
+		t.Errorf("NextCursor = %q on a page that consumed every event, want nil", *page.NextCursor)
+	}
+}
+
+// Order is one of asc or desc, or empty for the ascending default. The store is
+// strict and case-sensitive, matching the SDK's lowercase enum, so an unknown
+// value is an error rather than a silent fallback.
+func TestQueryValidatesOrder(t *testing.T) {
+	t.Parallel()
+
+	events, _, _ := eventsStore(t)
+	ctx := context.Background()
+	seed(t, events, newEvent(4430000, 0, "transfer"))
+
+	for _, order := range []string{"", "asc", "desc"} {
+		if _, err := events.Query(ctx, store.EventQuery{ContractID: showcase, Order: order}); err != nil {
+			t.Errorf("Query rejected the valid order %q: %v", order, err)
+		}
+	}
+	for _, order := range []string{"ASC", "Desc", "sideways", "ascending", "1"} {
+		if _, err := events.Query(ctx, store.EventQuery{ContractID: showcase, Order: order}); err == nil {
+			t.Errorf("Query accepted the invalid order %q", order)
+		}
+	}
+}
+
+// --- topic_contains (ADR-041) ---
+
+// topic_contains is a literal, case-sensitive substring match against each
+// decoded topic value, honoring the published SDK. It is not a LIKE pattern, so
+// % and _ are ordinary characters, and it scans every topic in the array rather
+// than only the first.
+func TestQueryFiltersByTopicContains(t *testing.T) {
+	t.Parallel()
+
+	events, _, _ := eventsStore(t)
+	ctx := context.Background()
+
+	// newEvent sets a single topic whose value equals the name. custom carries a
+	// hand-built array so the filter can be shown matching a value that is not
+	// the event name, a topic that is not the first, and characters that would be
+	// wildcards under LIKE.
+	custom := newEvent(4430010, 10, "custom")
+	custom.TopicsJSON = json.RawMessage(`[{"type":"symbol","value":"admin"},{"type":"string","value":"fee%rate"}]`)
+
+	seed(t, events,
+		newEvent(4430000, 0, "transfer"),
+		newEvent(4430001, 1, "mint"),
+		newEvent(4430002, 2, "burn"),
+		custom,
+	)
+
+	cases := []struct {
+		name  string
+		query store.EventQuery
+		want  []string
+	}{
+		{"literal substring", store.EventQuery{ContractID: showcase, TopicContains: "trans"}, []string{"transfer"}},
+		{"case sensitive misses a different case", store.EventQuery{ContractID: showcase, TopicContains: "Trans"}, nil},
+		{"matches a value that is not the event name", store.EventQuery{ContractID: showcase, TopicContains: "admin"}, []string{"custom"}},
+		{"matches a topic that is not the first", store.EventQuery{ContractID: showcase, TopicContains: "fee%"}, []string{"custom"}},
+		{"percent is literal not a wildcard", store.EventQuery{ContractID: showcase, TopicContains: "fee%rate"}, []string{"custom"}},
+		{"underscore is literal not a wildcard", store.EventQuery{ContractID: showcase, TopicContains: "fee_rate"}, nil},
+		{"no match is an empty page", store.EventQuery{ContractID: showcase, TopicContains: "nowhere"}, nil},
+		{"combines with name", store.EventQuery{ContractID: showcase, Name: "transfer", TopicContains: "trans"}, []string{"transfer"}},
+		{"name filters out a topic match", store.EventQuery{ContractID: showcase, Name: "mint", TopicContains: "trans"}, nil},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			page, err := events.Query(ctx, c.query)
+			if err != nil {
+				t.Fatalf("Query: %v", err)
+			}
+			if page.Events == nil {
+				t.Fatal("Events is nil, which encodes as JSON null rather than []")
+			}
+			got := make([]string, len(page.Events))
+			for i, e := range page.Events {
+				got[i] = e.Name
+			}
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Errorf("result %d is %q, want %q (%v)", i, got[i], c.want[i], got)
+				}
+			}
+		})
 	}
 }

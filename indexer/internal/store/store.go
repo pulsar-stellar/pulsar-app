@@ -26,6 +26,32 @@ type Querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// Dialect names the SQL engine a store speaks. Almost every query in this
+// package is written once and runs unchanged on both engines, per ADR-029; the
+// exception is topic_contains, which has no portable spelling. The store
+// carries its dialect so it keeps importing only models and the standard
+// library rather than taking a dependency on the db package. Callers translate
+// db.Kind to a Dialect. See ADR-041.
+type Dialect int
+
+const (
+	// DialectSQLite is the zero value, matching the development default engine.
+	DialectSQLite Dialect = iota
+	DialectPostgres
+)
+
+// String makes a Dialect readable in test output and error messages.
+func (d Dialect) String() string {
+	switch d {
+	case DialectSQLite:
+		return "sqlite"
+	case DialectPostgres:
+		return "postgres"
+	default:
+		return fmt.Sprintf("Dialect(%d)", int(d))
+	}
+}
+
 // sqliteTimeLayout is what SQLite's CURRENT_TIMESTAMP produces: no T and no
 // offset, so it parses as UTC rather than as a local time.
 const sqliteTimeLayout = "2006-01-02 15:04:05"

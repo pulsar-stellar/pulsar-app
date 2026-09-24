@@ -185,6 +185,104 @@ func TestNotFoundContractMapsToNotFound404(t *testing.T) {
 	}
 }
 
+func TestValidationLimitMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationLimit.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationLimit.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationLimit.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestValidationCursorMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationCursor.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationCursor.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationCursor.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestValidationOrderMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationOrder.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationOrder.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationOrder.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestValidationLedgerRangeMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationLedgerRange.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationLedgerRange.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationLedgerRange.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestValidationFilterMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationFilter.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationFilter.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationFilter.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestValidationEventIDMapsToValidation400(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeValidationEventID.Class(); got != ClassValidation {
+		t.Errorf("Class() = %q, want %q", got, ClassValidation)
+	}
+	if got := CodeValidationEventID.Status(); got != http.StatusBadRequest {
+		t.Errorf("Status() = %d, want %d", got, http.StatusBadRequest)
+	}
+	if !CodeValidationEventID.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestNotFoundEventMapsToNotFound404(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeNotFoundEvent.Class(); got != ClassNotFound {
+		t.Errorf("Class() = %q, want %q", got, ClassNotFound)
+	}
+	if got := CodeNotFoundEvent.Status(); got != http.StatusNotFound {
+		t.Errorf("Status() = %d, want %d", got, http.StatusNotFound)
+	}
+	if !CodeNotFoundEvent.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
 // An unregistered code must degrade to internal/500, never to an empty class
 // or a zero status, because either would reach the wire as something the SDK
 // cannot validate.
