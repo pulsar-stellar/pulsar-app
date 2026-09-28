@@ -21,6 +21,11 @@ import (
 // See ADR-028.
 const MaxBatchSize = 10000
 
+// MinAdminTokenLen is the shortest admin token Load accepts. The token guards
+// the write surface (ADR-044), so a value shorter than this is refused at
+// startup as trivially guessable rather than accepted as a real secret.
+const MinAdminTokenLen = 16
+
 // Config is the indexer's validated configuration. Every field is populated by
 // Load, and a Config that Load returned without error is safe to use as-is.
 type Config struct {
@@ -48,6 +53,23 @@ type Config struct {
 	BatchSize    int
 
 	BootstrapContracts []string
+
+	// AdminToken is the bearer token the write routes require (ADR-044). It is
+	// required and has no default: the write surface must not start without
+	// one, so a deployment cannot expose open writes by omission.
+	AdminToken string
+
+	// WriteRatePerSec and WriteRateBurst size the token bucket that caps the
+	// write routes (ADR-044). They default so a deployment that sets neither
+	// still runs behind a limiter rather than unbounded.
+	WriteRatePerSec int
+	WriteRateBurst  int
+
+	// ReadTimeout bounds the wall-clock time any request may spend in a
+	// handler, applied surface-wide (ADR-044). It is a distinct guard from the
+	// GraphQL query-shape limits: it bounds time in the store or RPC for any
+	// request regardless of the query's shape.
+	ReadTimeout time.Duration
 }
 
 // Getenv reads one environment variable, returning the empty string when it is
@@ -64,11 +86,13 @@ var (
 
 // Load reads the indexer's configuration from getenv and validates it.
 //
-// Three variables are required and have no default: PULSAR_INDEXER_DB_URL,
-// PULSAR_INDEXER_RPC_URL, and PULSAR_INDEXER_NETWORK. Defaulting any of them
-// would let a deployment run against the wrong database or the wrong network
-// while looking healthy, which is the failure this project refuses to ship.
-// The rest carry the defaults documented in .env.example.
+// Four variables are required and have no default: PULSAR_INDEXER_DB_URL,
+// PULSAR_INDEXER_RPC_URL, PULSAR_INDEXER_NETWORK, and
+// PULSAR_INDEXER_ADMIN_TOKEN. Defaulting either connection variable would let a
+// deployment run against the wrong database or network while looking healthy,
+// and defaulting the admin token would expose the write surface, which is the
+// failure ADR-044 refuses to ship. The rest carry the defaults documented in
+// .env.example.
 func Load(getenv Getenv) (Config, error) {
 	cfg := Config{
 		ListenAddr: withDefault(getenv, "PULSAR_INDEXER_LISTEN_ADDR", ":8080"),
@@ -151,6 +175,35 @@ func Load(getenv Getenv) (Config, error) {
 		return Config{}, err
 	}
 	cfg.BootstrapContracts = contracts
+
+	adminToken, err := required(getenv, "PULSAR_INDEXER_ADMIN_TOKEN")
+	if err != nil {
+		return Config{}, err
+	}
+	if len(adminToken) < MinAdminTokenLen {
+		return Config{}, fmt.Errorf(
+			"PULSAR_INDEXER_ADMIN_TOKEN is %d characters, but it must be at least %d so the write surface is not guarded by a trivially guessable token",
+			len(adminToken), MinAdminTokenLen)
+	}
+	cfg.AdminToken = adminToken
+
+	writeRatePerSec, err := positiveInt(getenv, "PULSAR_INDEXER_WRITE_RATE_PER_SEC", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.WriteRatePerSec = writeRatePerSec
+
+	writeRateBurst, err := positiveInt(getenv, "PULSAR_INDEXER_WRITE_RATE_BURST", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.WriteRateBurst = writeRateBurst
+
+	readTimeoutSec, err := positiveInt(getenv, "PULSAR_INDEXER_READ_TIMEOUT_SEC", 15)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ReadTimeout = time.Duration(readTimeoutSec) * time.Second
 
 	return cfg, nil
 }

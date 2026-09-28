@@ -29,16 +29,19 @@ func isUpperSnake(s string) bool {
 
 // classStatus is the HTTP status each wire class must carry. It is the
 // invariant a registry typo would break: a validation code with a 500, say.
+// ClassUnauthorized (401) is the fifth class, added for the write surface by
+// ADR-044 as a deliberate extension of ADR-017's original four.
 var classStatus = map[Class]int{
-	ClassValidation:  http.StatusBadRequest,
-	ClassNotFound:    http.StatusNotFound,
-	ClassRateLimited: http.StatusTooManyRequests,
-	ClassInternal:    http.StatusInternalServerError,
+	ClassValidation:   http.StatusBadRequest,
+	ClassNotFound:     http.StatusNotFound,
+	ClassRateLimited:  http.StatusTooManyRequests,
+	ClassUnauthorized: http.StatusUnauthorized,
+	ClassInternal:     http.StatusInternalServerError,
 }
 
-// Every registered code must name one of the four wire classes, carry the
-// status that class implies, and document a meaning. This is the completeness
-// check ADR-038 promises: the catalog cannot drift into an entry a consumer or
+// Every registered code must name one of the wire classes, carry the status
+// that class implies, and document a meaning. This is the completeness check
+// ADR-038 promises: the catalog cannot drift into an entry a consumer or
 // docs/error-codes.md cannot use.
 func TestRegistryEntriesAreComplete(t *testing.T) {
 	t.Parallel()
@@ -55,7 +58,7 @@ func TestRegistryEntriesAreComplete(t *testing.T) {
 			class := code.Class()
 			wantStatus, known := classStatus[class]
 			if !known {
-				t.Fatalf("code %q has class %q, which is not one of the four wire classes", code, class)
+				t.Fatalf("code %q has class %q, which is not one of the wire classes", code, class)
 			}
 			if got := code.Status(); got != wantStatus {
 				t.Errorf("code %q class %q: status = %d, want %d", code, class, got, wantStatus)
@@ -279,6 +282,34 @@ func TestNotFoundEventMapsToNotFound404(t *testing.T) {
 		t.Errorf("Status() = %d, want %d", got, http.StatusNotFound)
 	}
 	if !CodeNotFoundEvent.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestUnauthorizedMapsToUnauthorized401(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeUnauthorized.Class(); got != ClassUnauthorized {
+		t.Errorf("Class() = %q, want %q", got, ClassUnauthorized)
+	}
+	if got := CodeUnauthorized.Status(); got != http.StatusUnauthorized {
+		t.Errorf("Status() = %d, want %d", got, http.StatusUnauthorized)
+	}
+	if !CodeUnauthorized.Registered() {
+		t.Error("Registered() = false for a registered code")
+	}
+}
+
+func TestRateLimitedMapsToRateLimited429(t *testing.T) {
+	t.Parallel()
+
+	if got := CodeRateLimited.Class(); got != ClassRateLimited {
+		t.Errorf("Class() = %q, want %q", got, ClassRateLimited)
+	}
+	if got := CodeRateLimited.Status(); got != http.StatusTooManyRequests {
+		t.Errorf("Status() = %d, want %d", got, http.StatusTooManyRequests)
+	}
+	if !CodeRateLimited.Registered() {
 		t.Error("Registered() = false for a registered code")
 	}
 }

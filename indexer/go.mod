@@ -8,6 +8,7 @@ require (
 	github.com/graph-gophers/graphql-go v1.10.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/stellar/go-stellar-sdk v0.7.3
+	golang.org/x/time v0.14.0
 	modernc.org/sqlite v1.57.0
 )
 
