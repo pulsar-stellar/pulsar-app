@@ -33,6 +33,7 @@ const PUBLIC_SURFACE = [
   'EventQuerySchema',
   'LiveEventFilterSchema',
   'LiveEventQuerySchema',
+  'PulsarAuthError',
   'PulsarClient',
   'PulsarConfigSchema',
   'PulsarError',
@@ -101,6 +102,7 @@ describe('the surface is usable as exported', () => {
 
   it('exposes the error hierarchy so a consumer can branch on it', () => {
     expect(sdk.PulsarNetworkError.prototype).toBeInstanceOf(sdk.PulsarError);
+    expect(sdk.PulsarAuthError.prototype).toBeInstanceOf(sdk.PulsarError);
     expect(sdk.PulsarValidationError.prototype).toBeInstanceOf(sdk.PulsarError);
   });
 

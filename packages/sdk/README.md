@@ -66,6 +66,21 @@ if (event !== null) {
 }
 ```
 
+### Register a contract to index
+
+Registration is a write route. A Pulsar indexer gates its writes behind a static bearer token, so configure `adminToken` to authenticate them. The token rides only on writes, never on the public reads above.
+
+```ts
+const client = new PulsarClient({
+  indexerUrl: 'https://indexer.example.com',
+  adminToken: process.env.PULSAR_INDEXER_ADMIN_TOKEN, // at least 16 characters
+});
+
+const contract = await client.registerContract('CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L');
+```
+
+A bearer token sent over plaintext http would leak, so the SDK refuses one against an `http` indexer unless the host is loopback (`localhost`, `127.0.0.1`, `[::1]`). Configuring an `adminToken` against any other `http` URL throws a `PulsarValidationError` at construction, before any request is sent. If the indexer rejects the write with a 401, the call throws a `PulsarAuthError`.
+
 ## Key concepts
 
 **Decoding is wire-faithful.** A `DecodedEvent` reports what the ledger holds. `name` is the leading topic Symbol exactly as emitted, lowercase, and topics stay separate from data. Integers wider than 32 bits are strings so JSON cannot round them, and every event carries the raw XDR beside the decoded form so you can check the decoding rather than trust it.
@@ -109,18 +124,22 @@ Your `account` is never mutated, so you can build several calls from one.
 Everything thrown descends from `PulsarError`, so you can branch on the kind rather than match message text.
 
 ```ts
-import { PulsarNetworkError, PulsarValidationError } from '@pulsar-stellar/sdk';
+import { PulsarAuthError, PulsarNetworkError, PulsarValidationError } from '@pulsar-stellar/sdk';
 
 try {
-  await client.events(contractId);
+  await client.registerContract(contractId);
 } catch (error) {
-  if (error instanceof PulsarNetworkError) {
+  if (error instanceof PulsarAuthError) {
+    console.error('write rejected, check adminToken', error.status);
+  } else if (error instanceof PulsarNetworkError) {
     console.error('unreachable or refused', error.status, error.url);
   } else if (error instanceof PulsarValidationError) {
     console.error('unexpected shape', error.issues);
   }
 }
 ```
+
+`PulsarAuthError` is a sibling of `PulsarNetworkError`, not a subclass, on purpose: a caller that retries a `PulsarNetworkError` as a transient fault should not retry an auth failure, which only fails again until the token is fixed.
 
 ## Prerequisites
 

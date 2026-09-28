@@ -4,6 +4,7 @@ import {
   findPulsarError,
   PulsarError,
   PulsarNetworkError,
+  type PulsarAuthError,
   type PulsarValidationError,
 } from '../src/errors.js';
 
@@ -15,6 +16,7 @@ describe('PulsarError is abstract', () => {
 
   it('is still usable as a catch-all type', () => {
     expectTypeOf<PulsarNetworkError>().toExtend<PulsarError>();
+    expectTypeOf<PulsarAuthError>().toExtend<PulsarError>();
     expectTypeOf<PulsarValidationError>().toExtend<PulsarError>();
   });
 });

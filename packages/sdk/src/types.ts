@@ -398,7 +398,7 @@ export type Envelope = z.infer<typeof EnvelopeSchema>;
 /** The error envelope the indexer returns for a failed request, per ADR-017. */
 export const ErrorEnvelopeSchema = z.object({
   error: z.object({
-    code: z.enum(['not_found', 'validation', 'internal', 'rate_limited']),
+    code: z.enum(['not_found', 'validation', 'internal', 'rate_limited', 'unauthorized']),
     message: z.string(),
   }),
 });
@@ -439,27 +439,80 @@ export interface PingResult {
 /** The default request timeout, in milliseconds. */
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
+/** The smallest admin token the indexer accepts, per ADR-044. */
+export const MIN_ADMIN_TOKEN_LENGTH = 16;
+
+/**
+ * Hosts for which plaintext http is treated as a secure transport.
+ *
+ * A bearer token sent over http travels in clear text, so the SDK refuses to
+ * attach one to a plaintext request. The loopback interface is the exception:
+ * it never leaves the machine, and requiring https there would break the
+ * ordinary local-development setup where the indexer runs on `localhost`. This
+ * mirrors the "secure context" rule browsers apply to loopback.
+ */
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * Whether an admin token may be sent to this URL without leaking it.
+ *
+ * True for any https URL, and for http only when the host is loopback. A URL
+ * that does not parse is treated as unsafe: a security guard fails closed. In
+ * practice the `url()` check on `indexerUrl` rejects a malformed URL first, so
+ * this branch is unreachable today, but failing closed here means the guard
+ * never depends on `z.url()` and the `URL` constructor agreeing on what parses.
+ */
+function tokenTransportIsSafe(indexerUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(indexerUrl);
+  } catch {
+    return false;
+  }
+  return parsed.protocol === 'https:' || LOOPBACK_HOSTS.has(parsed.hostname);
+}
+
 /**
  * Configuration for a `PulsarClient`.
  *
  * `rpcUrl` is needed only for reads that bypass the indexer and go straight to
  * Soroban RPC. A client that only queries the indexer does not need one.
  *
+ * `adminToken` authenticates the write routes (`registerContract`), which the
+ * indexer gates behind a static bearer token per ADR-044. It is sent only on
+ * writes, never on public reads, and only over a secure transport: configuring
+ * one against a plaintext http indexer that is not loopback is rejected here
+ * rather than leaking the token on the first write.
+ *
  * `fetchImpl` exists for runtimes that do not expose a global `fetch`, and for
  * tests that want to supply their own. It is validated as a function and no
- * further: its signature is checked by the type system, not at runtime.
+ * further: its signature is checked by the type system, not at runtime. A
+ * custom implementation must strip the `Authorization` header on a cross-origin
+ * redirect, as the platform `fetch` does, so a write's bearer token is never
+ * forwarded to a different origin.
  */
-export const PulsarConfigSchema = z.strictObject({
-  indexerUrl: z.url({ protocol: HTTP_PROTOCOL, error: 'indexerUrl must be an http or https URL' }),
-  rpcUrl: z
-    .url({ protocol: HTTP_PROTOCOL, error: 'rpcUrl must be an http or https URL' })
-    .optional(),
-  network: PulsarNetworkSchema.optional(),
-  fetchImpl: z.custom<typeof fetch>((value) => typeof value === 'function', {
-    error: 'fetchImpl must be a function',
-  }).optional(),
-  timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
-});
+export const PulsarConfigSchema = z
+  .strictObject({
+    indexerUrl: z.url({ protocol: HTTP_PROTOCOL, error: 'indexerUrl must be an http or https URL' }),
+    rpcUrl: z
+      .url({ protocol: HTTP_PROTOCOL, error: 'rpcUrl must be an http or https URL' })
+      .optional(),
+    network: PulsarNetworkSchema.optional(),
+    adminToken: z
+      .string()
+      .min(MIN_ADMIN_TOKEN_LENGTH, {
+        error: `adminToken must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters`,
+      })
+      .optional(),
+    fetchImpl: z.custom<typeof fetch>((value) => typeof value === 'function', {
+      error: 'fetchImpl must be a function',
+    }).optional(),
+    timeoutMs: z.number().int().positive().default(DEFAULT_TIMEOUT_MS),
+  })
+  .refine((config) => config.adminToken === undefined || tokenTransportIsSafe(config.indexerUrl), {
+    error: 'adminToken requires an https indexerUrl (http is allowed only for localhost)',
+    path: ['adminToken'],
+  });
 
 /** Configuration as a caller supplies it. */
 export type PulsarConfig = z.input<typeof PulsarConfigSchema>;

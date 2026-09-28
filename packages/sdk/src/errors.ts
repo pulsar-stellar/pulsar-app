@@ -100,6 +100,44 @@ export class PulsarNetworkError extends PulsarError {
   }
 }
 
+/** Options for an authentication failure, carrying the HTTP specifics. */
+export interface PulsarAuthErrorOptions extends PulsarErrorOptions {
+  /** HTTP status, or null when the request never produced one. */
+  readonly status?: number | null;
+  /** The URL that was called, or null when the failure precedes a request. */
+  readonly url?: string | null;
+}
+
+/**
+ * A write was rejected because it carried no valid credential.
+ *
+ * Thrown on a 401, whether it arrives as the indexer's `unauthorized` error
+ * envelope (ADR-044) or as a bare 401 from something in front of it. It is a
+ * sibling of {@link PulsarNetworkError} under {@link PulsarError}, not a
+ * subclass of it, on purpose: a caller that retries a `PulsarNetworkError` as a
+ * transient fault must not retry this, because retrying without fixing the
+ * token only fails again.
+ */
+export class PulsarAuthError extends PulsarError {
+  /** HTTP status, or null when the request never got one. */
+  readonly status: number | null;
+
+  /** The URL called, or null when the failure happened before the request. */
+  readonly url: string | null;
+
+  constructor(message: string, options: PulsarAuthErrorOptions) {
+    const status = options.status ?? null;
+    const url = options.url ?? null;
+    super(message, {
+      ...options,
+      details: { ...options.details, ...(status === null ? {} : { status }), ...(url === null ? {} : { url }) },
+    });
+    this.name = 'PulsarAuthError';
+    this.status = status;
+    this.url = url;
+  }
+}
+
 /**
  * A value did not match the schema it was parsed against.
  *

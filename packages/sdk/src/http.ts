@@ -12,7 +12,7 @@
 
 import type { z } from 'zod';
 
-import { PulsarNetworkError, PulsarValidationError } from './errors.js';
+import { PulsarAuthError, PulsarNetworkError, PulsarValidationError } from './errors.js';
 import { EnvelopeSchema, ErrorEnvelopeSchema, type ResolvedPulsarConfig } from './types.js';
 
 /** HTTP methods the indexer API uses. */
@@ -32,6 +32,13 @@ export interface RequestOptions<T extends z.ZodTypeAny> {
   readonly body?: unknown;
   /** Query string parameters. Undefined values are omitted, not sent empty. */
   readonly query?: Readonly<Record<string, string | number | undefined>>;
+  /**
+   * Whether this request targets a gated write route and should carry the
+   * configured admin token. Left off for public reads, so a `GET` never sends
+   * the token even when one is configured. The transport safety of sending it
+   * is enforced at config time; see `PulsarConfigSchema`.
+   */
+  readonly authenticated?: boolean;
 }
 
 /** A validated response, with the timings that came with it. */
@@ -120,14 +127,23 @@ async function send<T extends z.ZodTypeAny>(
   const method = options.method ?? 'GET';
   const hasBody = options.body !== undefined;
 
+  // Built fresh per request. `accept` always; `content-type` only with a body;
+  // the bearer token only on a gated write, and only when one is configured, so
+  // a public read never carries a secret.
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (hasBody) {
+    headers['content-type'] = 'application/json';
+  }
+  if (options.authenticated === true && config.adminToken !== undefined) {
+    headers.authorization = `Bearer ${config.adminToken}`;
+  }
+
   let response: Response;
   try {
     response = await fetchImpl(url, {
       method,
       signal: AbortSignal.timeout(config.timeoutMs),
-      headers: hasBody
-        ? { accept: 'application/json', 'content-type': 'application/json' }
-        : { accept: 'application/json' },
+      headers,
       ...(hasBody ? { body: JSON.stringify(options.body) } : {}),
     });
   } catch (cause) {
@@ -152,6 +168,18 @@ async function send<T extends z.ZodTypeAny>(
       return null;
     }
 
+    // A rejected credential (ADR-044). Distinct from a transport fault so a
+    // caller retrying network errors does not retry an auth failure that will
+    // only fail again until the token is fixed.
+    if (code === 'unauthorized') {
+      throw new PulsarAuthError('Indexer rejected the request as unauthorized', {
+        operation: options.operation,
+        status: response.status,
+        url,
+        details,
+      });
+    }
+
     // A success status carrying an error envelope is the server contradicting
     // itself. The transport worked, so this is a response-shape problem.
     if (response.ok) {
@@ -170,6 +198,16 @@ async function send<T extends z.ZodTypeAny>(
   }
 
   if (!response.ok) {
+    // A 401 without the error envelope is still an auth failure, just from
+    // something in front of the indexer rather than the indexer itself.
+    if (response.status === 401) {
+      throw new PulsarAuthError('Indexer returned HTTP 401', {
+        operation: options.operation,
+        status: 401,
+        url,
+      });
+    }
+
     throw new PulsarNetworkError(`Indexer returned HTTP ${response.status}`, {
       operation: options.operation,
       status: response.status,
