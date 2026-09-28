@@ -12,7 +12,7 @@ import (
 // business routes, a not-found handler so an unmatched route still answers with
 // the ADR-017 envelope rather than chi's bare 404, and a method-not-allowed
 // handler so a known path hit with the wrong method answers the same way, all
-// wrapped by the request-logging and panic-recovery middleware.
+// wrapped by the surface-wide middleware chain.
 func (s *Server) Routes() http.Handler {
 	r := chi.NewRouter()
 
@@ -21,14 +21,26 @@ func (s *Server) Routes() http.Handler {
 
 	r.Get("/health", s.handleHealth)
 
+	// The write routes sit behind the auth gate, and behind the rate limiter
+	// when one is configured (ADR-044). RateLimit is listed before RequireAuth so
+	// it wraps it: an unauthenticated flood is capped before the auth comparison
+	// runs. writeMiddleware collects the guards so both write routes carry the
+	// same stack, and reads carry none.
+	writeMiddleware := make([]func(http.Handler) http.Handler, 0, 2)
+	if s.writeLimiter != nil {
+		writeMiddleware = append(writeMiddleware, RateLimit(s.writeLimiter))
+	}
+	writeMiddleware = append(writeMiddleware, RequireAuth(s.authToken))
+
 	// The contract routes are registered flat rather than under a chi subrouter
 	// so /contracts matches the SDK's paths exactly, with no trailing slash and
-	// no redirect. List and register share the collection path; get and delete
-	// share the item path, with the ID as a URL parameter the handler reads.
+	// no redirect. List and get are public reads; register and delete are the
+	// write surface and carry the auth (and rate-limit) middleware inline, so the
+	// GET on the same path stays open.
 	r.Get("/contracts", s.handleListContracts)
-	r.Post("/contracts", s.handleRegisterContract)
+	r.With(writeMiddleware...).Post("/contracts", s.handleRegisterContract)
 	r.Get("/contracts/{id}", s.handleGetContract)
-	r.Delete("/contracts/{id}", s.handleDeleteContract)
+	r.With(writeMiddleware...).Delete("/contracts/{id}", s.handleDeleteContract)
 
 	// The events routes are registered flat for the same reason as the contract
 	// routes: the paths match the SDK's exactly. The list route is nested under a
@@ -42,12 +54,15 @@ func (s *Server) Routes() http.Handler {
 	// logging, panic recovery, and the request id.
 	r.Post("/graphql", s.handleGraphQL)
 
-	// RequestLogger and Recoverer wrap the whole mux, not chi's Use stack: chi
-	// skips its Use middleware for the not-found path until a route is
-	// registered, so wrapping the mux is what applies them to every request,
-	// matched or not. RequestLogger is outermost so the status a recovered panic
-	// produces is the status it logs.
-	return RequestLogger(s.log)(Recoverer(s.log)(r))
+	// The surface-wide chain wraps the whole mux, not chi's Use stack: chi skips
+	// its Use middleware for the not-found path until a route is registered, so
+	// wrapping the mux is what applies these to every request, matched or not.
+	// RequestLogger is outermost so the status a recovered panic produces is the
+	// status it logs. SecurityHeaders rides on every response; ReadDeadline bounds
+	// the time any request may spend downstream (a no-op when unset); Recoverer
+	// sits innermost so a handler panic becomes an envelope before the outer
+	// layers see it.
+	return RequestLogger(s.log)(SecurityHeaders(ReadDeadline(s.readTimeout)(Recoverer(s.log)(r))))
 }
 
 // handleNotFound answers a request that matched no route with a 404 not_found

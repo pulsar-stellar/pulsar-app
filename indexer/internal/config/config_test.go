@@ -11,14 +11,16 @@ import (
 
 const showcaseContract = "CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L"
 
-// validEnv is the smallest environment Load accepts: the three required
-// variables and nothing else. Tests copy it and mutate the copy, so no test
-// can affect another.
+// validEnv is the smallest environment Load accepts: the required variables and
+// nothing else. The admin token is required because the write surface must not
+// start without one (ADR-044), so it sits here beside the three connection
+// variables. Tests copy it and mutate the copy, so no test can affect another.
 func validEnv() map[string]string {
 	return map[string]string{
-		"PULSAR_INDEXER_DB_URL":  "file:./pulsar.db",
-		"PULSAR_INDEXER_RPC_URL": "https://soroban-testnet.stellar.org",
-		"PULSAR_INDEXER_NETWORK": "testnet",
+		"PULSAR_INDEXER_DB_URL":      "file:./pulsar.db",
+		"PULSAR_INDEXER_RPC_URL":     "https://soroban-testnet.stellar.org",
+		"PULSAR_INDEXER_NETWORK":     "testnet",
+		"PULSAR_INDEXER_ADMIN_TOKEN": "0123456789abcdef0123456789abcdef",
 	}
 }
 
@@ -64,6 +66,15 @@ func TestLoadAppliesDocumentedDefaults(t *testing.T) {
 	if len(cfg.BootstrapContracts) != 0 {
 		t.Errorf("BootstrapContracts = %v, want empty", cfg.BootstrapContracts)
 	}
+	if cfg.WriteRatePerSec != 5 {
+		t.Errorf("WriteRatePerSec = %d, want 5", cfg.WriteRatePerSec)
+	}
+	if cfg.WriteRateBurst != 10 {
+		t.Errorf("WriteRateBurst = %d, want 10", cfg.WriteRateBurst)
+	}
+	if cfg.ReadTimeout != 15*time.Second {
+		t.Errorf("ReadTimeout = %v, want %v", cfg.ReadTimeout, 15*time.Second)
+	}
 }
 
 func TestLoadReadsEveryVariable(t *testing.T) {
@@ -80,6 +91,10 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		env["PULSAR_INDEXER_POLL_INTERVAL_SEC"] = "30"
 		env["PULSAR_INDEXER_BATCH_SIZE"] = "250"
 		env["PULSAR_INDEXER_BOOTSTRAP_CONTRACTS"] = showcaseContract
+		env["PULSAR_INDEXER_ADMIN_TOKEN"] = "a-sufficiently-long-admin-token"
+		env["PULSAR_INDEXER_WRITE_RATE_PER_SEC"] = "20"
+		env["PULSAR_INDEXER_WRITE_RATE_BURST"] = "40"
+		env["PULSAR_INDEXER_READ_TIMEOUT_SEC"] = "30"
 	})
 	if err != nil {
 		t.Fatalf("Load with every variable set: unexpected error: %v", err)
@@ -96,13 +111,19 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		PollInterval:       30 * time.Second,
 		BatchSize:          250,
 		BootstrapContracts: []string{showcaseContract},
+		AdminToken:         "a-sufficiently-long-admin-token",
+		WriteRatePerSec:    20,
+		WriteRateBurst:     40,
+		ReadTimeout:        30 * time.Second,
 	}
 
 	if cfg.ListenAddr != want.ListenAddr || cfg.LogLevel != want.LogLevel ||
 		cfg.LogFormat != want.LogFormat || cfg.DBDriver != want.DBDriver ||
 		cfg.DBURL != want.DBURL || cfg.RPCURL != want.RPCURL ||
 		cfg.Network != want.Network || cfg.PollInterval != want.PollInterval ||
-		cfg.BatchSize != want.BatchSize {
+		cfg.BatchSize != want.BatchSize || cfg.AdminToken != want.AdminToken ||
+		cfg.WriteRatePerSec != want.WriteRatePerSec || cfg.WriteRateBurst != want.WriteRateBurst ||
+		cfg.ReadTimeout != want.ReadTimeout {
 		t.Errorf("Load = %+v, want %+v", cfg, want)
 	}
 	if len(cfg.BootstrapContracts) != 1 || cfg.BootstrapContracts[0] != showcaseContract {
@@ -120,6 +141,7 @@ func TestLoadRequiresVariablesAndNamesTheMissingOne(t *testing.T) {
 		"PULSAR_INDEXER_DB_URL",
 		"PULSAR_INDEXER_RPC_URL",
 		"PULSAR_INDEXER_NETWORK",
+		"PULSAR_INDEXER_ADMIN_TOKEN",
 	} {
 		t.Run(name+"/unset", func(t *testing.T) {
 			t.Parallel()
@@ -184,6 +206,15 @@ func TestLoadRejectsNonPositiveAndUnparseableNumbers(t *testing.T) {
 		{"PULSAR_INDEXER_BATCH_SIZE", "0"},
 		{"PULSAR_INDEXER_BATCH_SIZE", "-100"},
 		{"PULSAR_INDEXER_BATCH_SIZE", "lots"},
+		{"PULSAR_INDEXER_WRITE_RATE_PER_SEC", "0"},
+		{"PULSAR_INDEXER_WRITE_RATE_PER_SEC", "-5"},
+		{"PULSAR_INDEXER_WRITE_RATE_PER_SEC", "fast"},
+		{"PULSAR_INDEXER_WRITE_RATE_BURST", "0"},
+		{"PULSAR_INDEXER_WRITE_RATE_BURST", "-1"},
+		{"PULSAR_INDEXER_WRITE_RATE_BURST", "many"},
+		{"PULSAR_INDEXER_READ_TIMEOUT_SEC", "0"},
+		{"PULSAR_INDEXER_READ_TIMEOUT_SEC", "-30"},
+		{"PULSAR_INDEXER_READ_TIMEOUT_SEC", "30s"},
 	}
 
 	for _, c := range cases {
@@ -260,6 +291,34 @@ func TestLoadRejectsMalformedBootstrapContracts(t *testing.T) {
 			})
 			assertErrorNaming(t, err, "PULSAR_INDEXER_BOOTSTRAP_CONTRACTS")
 		})
+	}
+}
+
+// The admin token gates the write surface, so a trivially short one is refused
+// at startup rather than accepted as a real secret (ADR-044). A token exactly at
+// the minimum length is accepted.
+func TestLoadRejectsAShortAdminToken(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"short", "0123456789abcde"} { // 5 and 15 chars
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadWith(t, func(env map[string]string) {
+				env["PULSAR_INDEXER_ADMIN_TOKEN"] = value
+			})
+			assertErrorNaming(t, err, "PULSAR_INDEXER_ADMIN_TOKEN")
+		})
+	}
+
+	atMinimum := strings.Repeat("k", config.MinAdminTokenLen)
+	cfg, err := loadWith(t, func(env map[string]string) {
+		env["PULSAR_INDEXER_ADMIN_TOKEN"] = atMinimum
+	})
+	if err != nil {
+		t.Fatalf("token at the minimum length: unexpected error: %v", err)
+	}
+	if cfg.AdminToken != atMinimum {
+		t.Errorf("AdminToken = %q, want %q", cfg.AdminToken, atMinimum)
 	}
 }
 

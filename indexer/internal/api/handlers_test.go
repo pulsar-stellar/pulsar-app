@@ -83,6 +83,28 @@ func serve(srv *Server, method, target, body string) *httptest.ResponseRecorder 
 	return rr
 }
 
+// testAuthToken is the bearer token the write-route tests build their server
+// with (via WithAuthToken) and present through serveAuthed. It is at least
+// MinAdminTokenLen so it mirrors a real deployment's token rather than one the
+// config layer would reject.
+const testAuthToken = "test-admin-token-0123456789"
+
+// serveAuthed is serve with an Authorization: Bearer header carrying
+// testAuthToken, so a write-route test passes the auth gate the write routes
+// now sit behind (ADR-044) and reaches the handler under test.
+func serveAuthed(srv *Server, method, target, body string) *httptest.ResponseRecorder {
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, target, nil)
+	} else {
+		r = httptest.NewRequest(method, target, strings.NewReader(body))
+	}
+	r.Header.Set("Authorization", "Bearer "+testAuthToken)
+	rr := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rr, r)
+	return rr
+}
+
 // decodedHealth mirrors the ADR-017 success envelope for /health: the payload
 // under data, the indexer's timing under meta. next_cursor is decoded as a
 // present/absent probe, since ADR-017 says it is absent on a non-paginated
@@ -451,9 +473,9 @@ func TestRegisterContractReturnsTheStoredRecord(t *testing.T) {
 			srv := NewServer(nil, fakeContracts{registerFn: func(_ context.Context, id string) (models.Contract, error) {
 				gotID = id
 				return tt.record, nil
-			}}, fakeEvents{}, "1.2.3")
+			}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-			rr := serve(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`)
+			rr := serveAuthed(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`)
 
 			if rr.Code != http.StatusOK {
 				t.Errorf("status = %d, want 200", rr.Code)
@@ -520,9 +542,9 @@ func TestRegisterContractRejectsInvalidInput(t *testing.T) {
 			srv := NewServer(nil, fakeContracts{registerFn: func(context.Context, string) (models.Contract, error) {
 				t.Error("Register reached the store despite invalid input")
 				return models.Contract{}, nil
-			}}, fakeEvents{}, "1.2.3")
+			}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-			rr := serve(srv, http.MethodPost, "/contracts", tt.body)
+			rr := serveAuthed(srv, http.MethodPost, "/contracts", tt.body)
 
 			if rr.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400", rr.Code)
@@ -550,9 +572,9 @@ func TestRegisterContractReturns500WhenTheStoreFails(t *testing.T) {
 	const secret = "disk full on /var/lib/pulsar at host db-1"
 	srv := NewServer(log, fakeContracts{registerFn: func(context.Context, string) (models.Contract, error) {
 		return models.Contract{}, errorString(secret)
-	}}, fakeEvents{}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-	rr := serve(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`)
+	rr := serveAuthed(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`)
 
 	assertInternalStoreError(t, rr, buf, "contract_register_failed", secret)
 }
@@ -639,9 +661,9 @@ func TestDeleteContractReturns204(t *testing.T) {
 	srv := NewServer(nil, fakeContracts{deleteFn: func(_ context.Context, id string) error {
 		gotID = id
 		return nil
-	}}, fakeEvents{}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-	rr := serve(srv, http.MethodDelete, "/contracts/"+validContractID, "")
+	rr := serveAuthed(srv, http.MethodDelete, "/contracts/"+validContractID, "")
 
 	if rr.Code != http.StatusNoContent {
 		t.Errorf("status = %d, want 204", rr.Code)
@@ -659,9 +681,9 @@ func TestDeleteContractReturns404WhenUntracked(t *testing.T) {
 
 	srv := NewServer(nil, fakeContracts{deleteFn: func(_ context.Context, id string) error {
 		return fmt.Errorf("store: contract %s: %w", id, store.ErrNotFound)
-	}}, fakeEvents{}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-	rr := serve(srv, http.MethodDelete, "/contracts/"+validContractID, "")
+	rr := serveAuthed(srv, http.MethodDelete, "/contracts/"+validContractID, "")
 
 	assertNotFoundContract(t, rr)
 }
@@ -672,9 +694,9 @@ func TestDeleteContractRejectsAMalformedID(t *testing.T) {
 	srv := NewServer(nil, fakeContracts{deleteFn: func(context.Context, string) error {
 		t.Error("Delete reached the store despite a malformed id")
 		return nil
-	}}, fakeEvents{}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-	rr := serve(srv, http.MethodDelete, "/contracts/not-a-contract-id", "")
+	rr := serveAuthed(srv, http.MethodDelete, "/contracts/not-a-contract-id", "")
 
 	assertValidationContractID(t, rr)
 }
@@ -686,9 +708,9 @@ func TestDeleteContractReturns500WhenTheStoreFails(t *testing.T) {
 	const secret = "permission denied for table contracts as user pulsar_rw"
 	srv := NewServer(log, fakeContracts{deleteFn: func(context.Context, string) error {
 		return errorString(secret)
-	}}, fakeEvents{}, "1.2.3")
+	}}, fakeEvents{}, "1.2.3", WithAuthToken(testAuthToken))
 
-	rr := serve(srv, http.MethodDelete, "/contracts/"+validContractID, "")
+	rr := serveAuthed(srv, http.MethodDelete, "/contracts/"+validContractID, "")
 
 	assertInternalStoreError(t, rr, buf, "contract_delete_failed", secret)
 }
