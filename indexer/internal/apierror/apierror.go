@@ -19,18 +19,22 @@ import (
 	"sort"
 )
 
-// Class is the coarse error category carried on the wire as error.code. It is
-// the contract @pulsar-stellar/sdk@0.1.0 validates, fixed to these four values
-// by ADR-017; a fifth would be a breaking SDK change.
+// Class is the coarse error category carried on the wire as error.code.
+// ADR-017 fixed the original four values @pulsar-stellar/sdk@0.1.0 validates.
+// ADR-044 adds a fifth, ClassUnauthorized, scoped to the write surface's auth
+// gate: it is a deliberate, recorded extension of that set, and the owed SDK
+// follow-up teaches @pulsar-stellar/sdk to parse it. A sixth still needs an ADR.
 type Class string
 
-// The four wire classes. A consumer branches on these; the catalog Code in
-// error.details.code refines them.
+// The wire classes. A consumer branches on these; the catalog Code in
+// error.details.code refines them. The first four are ADR-017's original set;
+// ClassUnauthorized is ADR-044's write-surface addition.
 const (
-	ClassValidation  Class = "validation"
-	ClassNotFound    Class = "not_found"
-	ClassRateLimited Class = "rate_limited"
-	ClassInternal    Class = "internal"
+	ClassValidation   Class = "validation"
+	ClassNotFound     Class = "not_found"
+	ClassRateLimited  Class = "rate_limited"
+	ClassUnauthorized Class = "unauthorized"
+	ClassInternal     Class = "internal"
 )
 
 // Code is a stable, catalogued error identifier carried in the envelope's
@@ -126,6 +130,19 @@ const CodeValidationEventID Code = "VALIDATION_EVENT_ID"
 // which means the id was not a number in the first place.
 const CodeNotFoundEvent Code = "NOT_FOUND_EVENT"
 
+// CodeUnauthorized is returned when a request to a write route omits the bearer
+// token or presents the wrong one. Per ADR-044 it rides on a 401 with class
+// unauthorized, the fifth wire class, scoped to the write surface. The message
+// is identical for a missing and a wrong token, so it is not a credential
+// oracle, and the token itself is never logged or echoed.
+const CodeUnauthorized Code = "UNAUTHORIZED"
+
+// CodeRateLimited is returned when a request to a write route is refused because
+// the write-surface token bucket is empty. Per ADR-044 it rides on a 429 with
+// the existing rate_limited class ADR-017 already fixed, so it adds a catalog
+// code without widening the class set the way CodeUnauthorized does.
+const CodeRateLimited Code = "RATE_LIMITED"
+
 // entry is a code's registered metadata: the wire class a consumer switches
 // on, the HTTP status the response carries, and the one-line meaning
 // docs/error-codes.md publishes.
@@ -207,6 +224,16 @@ var registry = map[Code]entry{
 		class:   ClassNotFound,
 		status:  http.StatusNotFound,
 		meaning: "The indexer has not stored an event with the requested id.",
+	},
+	CodeUnauthorized: {
+		class:   ClassUnauthorized,
+		status:  http.StatusUnauthorized,
+		meaning: "The request to a write route is missing its bearer token or the token is not valid.",
+	},
+	CodeRateLimited: {
+		class:   ClassRateLimited,
+		status:  http.StatusTooManyRequests,
+		meaning: "The write surface is receiving requests faster than its configured rate; retry after a short wait.",
 	},
 }
 
