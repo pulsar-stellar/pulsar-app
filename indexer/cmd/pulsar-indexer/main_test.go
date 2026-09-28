@@ -33,6 +33,12 @@ func TestNewHTTPServerSetsSlowlorisGuardAndWiring(t *testing.T) {
 	if srv.ReadHeaderTimeout <= 0 {
 		t.Errorf("ReadHeaderTimeout = %v, want positive (gosec G112)", srv.ReadHeaderTimeout)
 	}
+	if srv.ReadTimeout <= 0 {
+		t.Errorf("ReadTimeout = %v, want positive to bound a slow request body", srv.ReadTimeout)
+	}
+	if srv.WriteTimeout <= 0 {
+		t.Errorf("WriteTimeout = %v, want positive to bound a slow response read", srv.WriteTimeout)
+	}
 	if srv.IdleTimeout <= 0 {
 		t.Errorf("IdleTimeout = %v, want positive", srv.IdleTimeout)
 	}
@@ -44,6 +50,24 @@ func TestNewHTTPServerSetsSlowlorisGuardAndWiring(t *testing.T) {
 	srv.Handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
 	if !reached {
 		t.Error("the configured handler did not run")
+	}
+}
+
+// The transport read and write timeouts must stay above the configured
+// per-request read deadline, so a request served within the application
+// deadline is never cut at the socket first. A generous read deadline must lift
+// the transport backstops with it rather than leaving them below it.
+func TestNewHTTPServerKeepsTransportTimeoutsAboveTheReadDeadline(t *testing.T) {
+	t.Parallel()
+
+	readDeadline := 60 * time.Second
+	srv := newHTTPServer(config.Config{ReadTimeout: readDeadline}, http.NewServeMux())
+
+	if srv.ReadTimeout <= readDeadline {
+		t.Errorf("ReadTimeout = %v, want above the %v read deadline", srv.ReadTimeout, readDeadline)
+	}
+	if srv.WriteTimeout <= readDeadline {
+		t.Errorf("WriteTimeout = %v, want above the %v read deadline", srv.WriteTimeout, readDeadline)
 	}
 }
 

@@ -41,15 +41,24 @@ import (
 )
 
 // HTTP transport timeouts, distinct from the surface-wide read deadline the API
-// applies per request (ADR-044): these bound the connection itself.
-// readHeaderTimeout caps the time a client may take to send request headers, so
-// a slow-loris client cannot pin a connection open (gosec G112). idleTimeout
-// bounds how long a kept-alive connection may sit unused. shutdownGrace bounds
-// the graceful drain before in flight requests are cut.
+// applies per request (ADR-044): these bound the connection itself, not the time
+// a request spends downstream. readHeaderTimeout caps the time a client may take
+// to send request headers, so a slow-loris client cannot pin a connection open
+// (gosec G112). transportTimeoutHeadroom is added to the configured read
+// deadline to derive the whole-request read and response-write timeouts, which
+// bound a client that trickles a request body or drains a response one byte at a
+// time (a slow-loris variant ReadHeaderTimeout does not cover) while staying
+// clear of the application deadline so a request served within it is never cut
+// at the socket first. defaultTransportTimeout is the floor used when the read
+// deadline is disabled. idleTimeout bounds a kept-alive connection sitting
+// unused. shutdownGrace bounds the graceful drain before in flight requests are
+// cut.
 const (
-	readHeaderTimeout = 10 * time.Second
-	idleTimeout       = 120 * time.Second
-	shutdownGrace     = 10 * time.Second
+	readHeaderTimeout        = 10 * time.Second
+	transportTimeoutHeadroom = 15 * time.Second
+	defaultTransportTimeout  = 30 * time.Second
+	idleTimeout              = 120 * time.Second
+	shutdownGrace            = 10 * time.Second
 )
 
 func main() {
@@ -204,14 +213,23 @@ func run() error {
 }
 
 // newHTTPServer builds the daemon's HTTP server from the config and the API
-// handler. The transport timeouts are fixed here rather than configured: they
-// guard the connection (a positive ReadHeaderTimeout clears gosec G112), while
-// the per-request read deadline the handler already applies is the tunable one.
+// handler. The transport timeouts are derived here rather than configured
+// directly: ReadHeaderTimeout clears gosec G112, and the whole-request read and
+// response-write timeouts are set a fixed headroom above the tunable per-request
+// read deadline the handler applies, so they backstop a slow-body or slow-read
+// client without cutting a request that finishes within the application
+// deadline. A disabled read deadline falls back to a fixed transport floor.
 func newHTTPServer(cfg config.Config, handler http.Handler) *http.Server {
+	transportTimeout := defaultTransportTimeout
+	if cfg.ReadTimeout > 0 {
+		transportTimeout = cfg.ReadTimeout + transportTimeoutHeadroom
+	}
 	return &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           handler,
 		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       transportTimeout,
+		WriteTimeout:      transportTimeout,
 		IdleTimeout:       idleTimeout,
 	}
 }
