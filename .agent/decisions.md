@@ -1732,4 +1732,43 @@ Step 72 of the build sequence brings the HTTP surface up inside the daemon. Unti
 - **The pulsar-docs companion grows.** Beyond ADR-043's owed `graphql-api.md`, the auth scheme, the `unauthorized` class and 401 status, the two new env vars, and the rate-limit and read-deadline behaviour must be documented in pulsar-docs (`indexer-reference/`). Per ADR-009 that lives in the sibling repo, so this repo's PR cannot carry it; the obligation is recorded here.
 - The env surface gains `PULSAR_INDEXER_ADMIN_TOKEN` (required), `PULSAR_INDEXER_WRITE_RATE_PER_SEC` (5), `PULSAR_INDEXER_WRITE_RATE_BURST` (10), and `PULSAR_INDEXER_READ_TIMEOUT_SEC` (15), all in `.env.example`.
 
+## ADR-045: The SDK learns the `unauthorized` wire class and sends a bearer token on write calls over a secure transport only
+Date: 2026-09-28
+Status: accepted
+
+### Context
+
+ADR-044 gated the indexer's write routes behind a static bearer token, added the fifth wire class `unauthorized` (401), and recorded that `@pulsar-stellar/sdk` owed a follow-up: it was REST-only, did not know the `unauthorized` class, and sent no credential, so it could not write to a gated indexer. This change closes that follow-up. It is SDK-local and adds no Go code; the wire contract it targets is the one ADR-044 already fixed.
+
+### Decision
+
+**A configured `adminToken` authenticates the write path, and only the write path.** `PulsarConfigSchema` gains an optional `adminToken`, rejected below `MIN_ADMIN_TOKEN_LENGTH` (16) to mirror ADR-044's `MinAdminTokenLen`. The transport attaches `Authorization: Bearer <token>` only when a request opts in with an explicit `authenticated: true` flag, which only `registerContract` sets; every read omits the flag, so a public GET never carries the secret even when a token is configured. The opt-in is a flag rather than method-sniffing so the decision is visible at each call site and a future read can never acquire the token by accident.
+
+**A token is refused over a transport that would leak it, at construction.** A bearer token sent over plaintext http travels in clear text, so a `.refine` on the config schema rejects an `adminToken` configured against an `http` indexer whose host is not loopback (`localhost`, `127.0.0.1`, `[::1]`). The check fails closed and runs at construction, before any request, so a misconfiguration surfaces where it was made rather than leaking the token on the first write. The loopback exception mirrors the browser "secure context" rule and keeps ordinary local development on `http://localhost` working. The guard itself fails closed on an unparseable URL.
+
+**A 401 is a distinct `PulsarAuthError`, a sibling of `PulsarNetworkError` under `PulsarError`, not a subclass.** It is thrown both for the indexer's `unauthorized` error envelope (ADR-044) and for a bare 401 from a proxy in front of the indexer. The sibling relationship is deliberate: a caller that retries a `PulsarNetworkError` as a transient fault must not retry an auth failure, which only fails again until the token is fixed. `ErrorEnvelopeSchema` learns the fifth class `unauthorized` so the envelope validates. The error carries `status`, `url`, and `details` (`code`, `indexerMessage` from the envelope); the token is never placed in its message, `details`, `url`, or `cause`.
+
+**The token does not serialize from `client.config`.** The resolved config's `adminToken` is made non-enumerable on the frozen object, so a `JSON.stringify`, a `console.log`, an object spread, or `Object.keys` on `client.config` all skip it and cannot leak it into a log. The transport still reads `config.adminToken` by direct access, which non-enumerability does not affect.
+
+### Alternatives considered
+
+**Method-sniffing to decide when to send the token.** Rejected for the explicit `authenticated: true` opt-in, which is visible at the call site and cannot be acquired by a read by accident.
+
+**`PulsarAuthError` as a subclass of `PulsarNetworkError`.** Rejected: it would fold an auth failure into the class callers retry as transient, causing a rejected credential to be re-sent in a loop.
+
+**Sending the token over any http.** Rejected as a plaintext leak. The loopback-only exception matches the browser secure-context rule and is the minimum that keeps local development working.
+
+**Exposing only a `hasAdminToken` boolean instead of the token on `config`.** Rejected as an unnecessary API change: the transport reads `config.adminToken` directly, and making the property non-enumerable closes the accidental-serialization leak without removing the value or changing the config type.
+
+### Consequences
+
+- The SDK can now write to a gated indexer: `registerContract` sends the bearer token and maps a 401 to `PulsarAuthError`. The public surface gains `PulsarAuthError` and the `PulsarAuthErrorOptions` type.
+- A security review (mandatory for this auth change, run with `model: opus`) found no critical or high issues; the token was verified to ride only the explicit opt-in, the transport guard to resist host-spoofing vectors (`localhost.evil.com`, userinfo `@`, fragment, trailing dot, `0.0.0.0`, IPv4-mapped IPv6), and no token value to reach any error message, `details`, `url`, or thrown exception. Its lower findings and their dispositions:
+  - **`client.config` re-exposed the token unredacted (medium):** the one getter that returns the whole config would spill the bearer token through an accidental `console.log`/`JSON.stringify`. Closed in this change: `adminToken` is non-enumerable on the frozen config, so it does not serialize, while direct access for the transport is unchanged.
+  - **The transport guard failed open on an unparseable URL (low):** `catch { return true }` treated a URL that `new URL()` rejects as safe. Unreachable today because `z.url()` rejects a malformed `indexerUrl` first and no zod-4.4.3/`URL` parse divergence was found, but a security guard should not depend on two parsers agreeing. Closed: the guard now returns `false` on a parse failure.
+  - **`Authorization` on a cross-origin redirect depends on the fetch implementation (low):** the platform `fetch` (undici) strips it, so the default runtime is safe, but a caller-supplied `fetchImpl` could forward it. Accepted with a documented contract: the `fetchImpl` doc now requires a custom implementation to strip `Authorization` on a cross-origin redirect; `redirect: 'manual'` was not forced, to avoid breaking legitimate redirects.
+  - **The 16-character minimum is a length floor, not entropy (informational):** it matches ADR-044 and the server contract. No change; token entropy stays a server-side concern, since the SDK cannot assess the randomness of a caller-supplied secret.
+- **The pulsar-docs companion still grows.** Per ADR-009 and ADR-044, the auth scheme, the `unauthorized` class and 401, and the `adminToken` config belong in the sibling `pulsar-stellar/pulsar-docs` repo; this repo's PR cannot carry them. The obligation stays recorded there and in ADR-044.
+
+
 
