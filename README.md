@@ -1,15 +1,44 @@
 # Pulsar App
 
-Pulsar Stellar is a toolkit for reading Soroban contract events. A project that
-consumes its own contract's events on Stellar writes the same pieces each time:
-an XDR decoder, an indexer to hold events past the seven-day RPC retention
-window, and an API to query them. Pulsar Stellar provides those pieces once. A
-Rust library decodes raw contract events into typed data, a Go daemon stores
-them past the retention window, and a web explorer lets anyone paste a contract
-ID and browse its decoded event history.
+[![CI: Go](https://github.com/pulsar-stellar/pulsar-app/actions/workflows/ci-go.yml/badge.svg)](https://github.com/pulsar-stellar/pulsar-app/actions/workflows/ci-go.yml)
+[![CI: TypeScript](https://github.com/pulsar-stellar/pulsar-app/actions/workflows/ci-ts.yml/badge.svg)](https://github.com/pulsar-stellar/pulsar-app/actions/workflows/ci-ts.yml)
+[![CI: Web](https://github.com/pulsar-stellar/pulsar-app/actions/workflows/ci-web.yml/badge.svg)](https://github.com/pulsar-stellar/pulsar-app/actions/workflows/ci-web.yml)
+[![npm](https://img.shields.io/npm/v/@pulsar-stellar/sdk.svg)](https://www.npmjs.com/package/@pulsar-stellar/sdk)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
+Pulsar Stellar is a developer toolkit for Soroban contract events. Every Stellar
+project that needs to consume its contract's events today writes the same
+plumbing from scratch: XDR decoders, indexer glue, custom APIs. Pulsar Stellar
+provides three shared building blocks so they don't have to. A Rust library that
+turns raw contract events into typed data, a Go daemon that stores historical
+events past the seven-day RPC retention window, and a web explorer where anyone
+can paste a contract ID and browse every event that contract has ever emitted,
+decoded and searchable. It serves Soroban dapp builders, backend engineers
+integrating with existing protocols, and auditors reviewing contract behavior
+post-deployment.
 
 `pulsar-app` is the application layer of that toolkit. The Rust contract layer
 lives in [`pulsar-stellar/pulsar-core`](https://github.com/pulsar-stellar/pulsar-core).
+
+## Where this repository sits
+
+The toolkit is three repositories. A contract emits events; `pulsar-core`
+provides the reference contract and the Rust decoder; `pulsar-app` (this repo)
+indexes, serves, and displays those events; `pulsar-docs` documents the whole.
+
+```mermaid
+flowchart LR
+    SC["Soroban contract<br/>(pulsar-core showcase)"] -->|emits events| RPC["Soroban RPC"]
+    RPC -->|poll, decode, store| IDX["indexer<br/>(Go daemon)"]
+    IDX -->|HTTP read API| SDK["@pulsar-stellar/sdk"]
+    IDX -->|HTTP read API| WEB["web explorer<br/>(Next.js)"]
+    RPC -.->|live fallback, no indexer| SDK
+    SDK --> APP["your backend or dapp"]
+    WEB --> USER["anyone with a contract ID"]
+```
+
+Everything a user of the toolkit actually touches lives here: a client library
+they install, a daemon they run or call, and a site they can send a colleague to.
 
 ## What this repository holds
 
@@ -19,8 +48,9 @@ Three sub-stacks share this repository and ship on their own timelines:
   It queries the indexer HTTP API, and reads live events straight from Soroban
   RPC when no indexer is available.
 - **`indexer/`**: the Go daemon. It polls Soroban RPC, decodes each event, and
-  stores it past the seven-day RPC retention window. It also carries the read
-  API the SDK and the explorer are built against.
+  stores it past the seven-day RPC retention window. It also serves the read API
+  the SDK and the explorer are built against. See
+  [`indexer/README.md`](indexer/README.md).
 - **`apps/web`**: the Next.js explorer. Paste a contract ID, browse its decoded
   event history. Not landed yet, see Status.
 
@@ -60,30 +90,31 @@ file would apply cleanly on both and silently corrupt one. See ADR-029.
 
 ## Status
 
-Sprint 3. The SDK is released. The indexer runs as a daemon and stores events;
-its HTTP API is written and tested but not yet served. The web explorer has not
-landed.
+Sprint 3, closing Phase F. The SDK is released. The indexer runs as a daemon,
+stores events, and now serves its full HTTP API (REST and GraphQL) alongside the
+poller, with the write routes gated by authentication and rate limiting. The web
+explorer has not landed.
 
 | Artifact | State |
 |---|---|
 | Workspace scaffold | complete |
 | `@pulsar-stellar/sdk` | released, `0.1.0` on npm, tag `v0.1.0-app` |
 | Go indexer, ingestion | running: polls RPC, decodes, stores events |
-| Go indexer, HTTP API | implemented and tested, not yet served |
+| Go indexer, REST API | served: health, contracts, and events routes |
+| Go indexer, GraphQL API | served: read-only `POST /graphql` (ADR-043) |
+| Go indexer, write gate | live: bearer auth plus rate limiting on writes (ADR-044) |
 | Web explorer | not in the tree, nothing deployed |
 
-What the daemon does today: it loads its configuration, opens the database,
-applies migrations, registers the bootstrap contracts, and runs one polling loop
-per contract that decodes events and writes them to the store. Run it and the
-events table fills. See [`indexer/cmd/pulsar-indexer/main.go`](indexer/cmd/pulsar-indexer/main.go).
-
-What it does not do yet: serve HTTP. The read API in `internal/api` implements
-`GET /health` and the `/contracts` collection (list, register, get, delete) with
-tests, but the daemon does not mount it, so no route is reachable from a running
-indexer. Event query routes are not built. Wiring the server into the daemon is
-step 72; when it is mounted, the state-changing routes (`POST` and
-`DELETE /contracts`) will be gated behind authentication and rate limiting. The
-sequencing note is in `main.go` and `.agent/context.md`.
+The daemon loads its configuration, opens the database, applies migrations,
+registers the bootstrap contracts, runs one polling loop per contract, and serves
+the HTTP surface, all stopping cleanly on SIGINT or SIGTERM. The read routes
+(`GET /health`, the `/contracts` collection, `GET /contracts/{id}/events`,
+`GET /events/{id}`, and `POST /graphql`) are public; the state-changing routes
+(`POST` and `DELETE /contracts`) require a bearer token and sit behind a rate
+limiter. A `DELETE` cascades to every event under the contract, which is why the
+write gate is a precondition of exposing the surface. Full detail, including every
+environment variable and the SQLite versus Postgres split, is in
+[`indexer/README.md`](indexer/README.md).
 
 The web explorer has not landed. The workspace reserves `apps/*` for it, but
 `apps/web` is not present at this commit and nothing is deployed.
@@ -92,11 +123,30 @@ This repository depends on `pulsar-core` `v0.1.0-contracts`, deployed to Stellar
 testnet. Its showcase contract ID is the fixture every sub-stack here reads from,
 recorded in `.env.example`.
 
+## Roadmap
+
+The full roadmap lives in [`docs/roadmap-product.md`](docs/roadmap-product.md).
+The application layer ships across five sprints, joined to `pulsar-core` at
+product-level milestones.
+
+| Sprint | Scope | State |
+|---|---|---|
+| 4 | Monorepo scaffold and TypeScript SDK | done, `@pulsar-stellar/sdk@0.1.0` |
+| 5 | Go indexer: ingestion, REST, GraphQL, write gate | in progress, Phase F closing |
+| 6 | Next.js explorer | next |
+| 7 | GitBook documentation | planned |
+| 8 | Deploy, publish, `v0.1.0-app` product milestone | planned |
+
+Beyond v0.1: webhooks and SSE for push delivery instead of polling, cross-contract
+search, and historical replay from archive nodes past the RPC retention window.
+Each is deferred by choice with a trigger recorded in the roadmap, not dropped.
+
 ## Related resources
 
 - npm package: [`@pulsar-stellar/sdk`](https://www.npmjs.com/package/@pulsar-stellar/sdk)
 - Release tag: [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
 - Rust contract layer: [`pulsar-stellar/pulsar-core`](https://github.com/pulsar-stellar/pulsar-core)
+- Indexer detail: [`indexer/README.md`](indexer/README.md)
 - Decision log (ADRs): [`.agent/decisions.md`](.agent/decisions.md)
 
 ## Using the SDK
@@ -155,8 +205,10 @@ Repo-wide checks, which CI also runs:
 ```
 
 `.env.example` copies to a working local configuration as it stands, defaulting
-to SQLite so the indexer needs no database to set up. `.env.local` is never
-committed. Production values are set in the Vercel and Render dashboards.
+to SQLite so the indexer needs no database to set up. Set
+`PULSAR_INDEXER_ADMIN_TOKEN` before the daemon will start, since the write surface
+must not come up without one. `.env.local` is never committed. Production values
+are set in the Vercel and Render dashboards.
 
 ## Contributing
 
@@ -189,3 +241,4 @@ Report a security issue privately per `SECURITY.md`, not in a public issue.
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
+
