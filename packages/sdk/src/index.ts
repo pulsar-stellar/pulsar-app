@@ -28,9 +28,11 @@ export { PulsarClient } from './client.js';
 
 export {
   findPulsarError,
+  PulsarAuthError,
   PulsarError,
   PulsarNetworkError,
   PulsarValidationError,
+  type PulsarAuthErrorOptions,
   type PulsarErrorOptions,
   type PulsarNetworkErrorOptions,
 } from './errors.js';

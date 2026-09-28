@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import {
   findPulsarError,
+  PulsarAuthError,
   PulsarError,
   PulsarNetworkError,
   PulsarValidationError,
@@ -28,6 +29,19 @@ describe('the instanceof chain', () => {
   it('keeps the two subclasses distinguishable from each other', () => {
     const network = new PulsarNetworkError('timeout', { operation: 'client.ping' });
     expect(network).not.toBeInstanceOf(PulsarValidationError);
+  });
+
+  it('makes an auth error catchable as a PulsarError but distinct from a network error', () => {
+    const error = new PulsarAuthError('unauthorized', {
+      operation: 'client.registerContract',
+      status: 401,
+    });
+    expect(error).toBeInstanceOf(PulsarAuthError);
+    expect(error).toBeInstanceOf(PulsarError);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PulsarNetworkError);
+    expect(error.name).toBe('PulsarAuthError');
+    expect(error.status).toBe(401);
   });
 
   it('names each class after itself, so a log line says which failure it was', () => {

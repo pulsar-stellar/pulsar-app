@@ -31,6 +31,7 @@ import type {
   PingResult,
   PulsarConfig,
   PulsarErrorOptions,
+  PulsarAuthErrorOptions,
   PulsarNetwork,
   PulsarNetworkErrorOptions,
   ResolvedEventQuery,
@@ -64,6 +65,7 @@ describe('the exported types', () => {
   it('carries the error option types', () => {
     expectTypeOf<PulsarErrorOptions>().not.toBeNever();
     expectTypeOf<PulsarNetworkErrorOptions>().not.toBeNever();
+    expectTypeOf<PulsarAuthErrorOptions>().not.toBeNever();
   });
 
   it('carries the live-path types', () => {
@@ -106,6 +108,7 @@ describe('the types that stay internal', () => {
 
   it('reports a genuinely public name as present, which is what makes the above mean something', () => {
     expectTypeOf<InSurface<'PulsarClient'>>().toEqualTypeOf<true>();
+    expectTypeOf<InSurface<'PulsarAuthError'>>().toEqualTypeOf<true>();
     expectTypeOf<InSurface<'decodeScVal'>>().toEqualTypeOf<true>();
     expectTypeOf<InSurface<'buildContractCall'>>().toEqualTypeOf<true>();
   });

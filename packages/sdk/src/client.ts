@@ -32,6 +32,28 @@ import {
 } from './types.js';
 
 /**
+ * Freezes a resolved config, hiding the admin token from casual serialization.
+ *
+ * The token stays readable by direct access, which is how the transport reads
+ * it, but is made non-enumerable so it does not spill through the one surface
+ * that exposes the whole config: `client.config`. A `JSON.stringify`, a
+ * `console.log`, an object spread, or `Object.keys` on the config all skip a
+ * non-enumerable property, so an accidental log of the config cannot leak the
+ * bearer token. Reading `config.adminToken` on purpose still returns it.
+ */
+function freezeConfig(config: ResolvedPulsarConfig): ResolvedPulsarConfig {
+  if (config.adminToken !== undefined) {
+    Object.defineProperty(config, 'adminToken', {
+      value: config.adminToken,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
+  }
+  return Object.freeze(config);
+}
+
+/**
  * A configured client for the Pulsar indexer and for direct RPC reads.
  *
  * Construction validates the whole configuration and fills in defaults, so
@@ -59,7 +81,7 @@ export class PulsarClient {
       });
     }
 
-    this.#config = Object.freeze(result.data);
+    this.#config = freezeConfig(result.data);
   }
 
   /**
@@ -119,10 +141,15 @@ export class PulsarClient {
    * The contract ID is validated here before any request is sent, so an
    * obvious mistake costs nothing and reports the problem where it was made.
    *
+   * This is a write route, gated by the indexer behind a bearer token per
+   * ADR-044. Configure `adminToken` on the client to authenticate it; without
+   * one, a gated indexer answers 401 and this throws a {@link PulsarAuthError}.
+   *
    * @param contractId - A Soroban contract ID: `C` followed by 55 base32
    * characters.
    * @throws {PulsarValidationError} if the contract ID is malformed, or if the
    * indexer's response is not the shape this SDK version expects.
+   * @throws {PulsarAuthError} if the indexer rejects the write as unauthorized.
    * @throws {PulsarNetworkError} if the indexer is unreachable, times out,
    * returns a non-success status, answers with something that is not JSON, or
    * returns the error envelope.
@@ -143,6 +170,7 @@ export class PulsarClient {
       body: { contract_id: validated.data },
       schema: ContractInfoPayloadSchema,
       operation: 'client.registerContract',
+      authenticated: true,
     });
 
     return toContractInfo(result.data);
