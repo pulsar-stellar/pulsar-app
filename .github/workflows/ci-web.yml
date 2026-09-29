@@ -32,6 +32,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # The web app imports @pulsar-stellar/sdk types. Type-aware lint and tsc
+      # resolve them from the SDK's built dist/*.d.ts, so the SDK must be built
+      # before the web app is linted, typechecked, or built.
+      - name: Build SDK
+        run: pnpm --filter ./packages/sdk build
+
       - name: Lint
         run: pnpm --filter ./apps/web lint
 

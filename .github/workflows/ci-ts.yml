@@ -36,6 +36,12 @@ jobs:
       - name: Verify env parity
         run: ./scripts/verify-env-parity.sh
 
+      # The web app's type-aware lint and typecheck resolve @pulsar-stellar/sdk
+      # from its built dist/*.d.ts, so the SDK must be built before the recursive
+      # lint and typecheck run across the workspace.
+      - name: Build SDK
+        run: pnpm --filter ./packages/sdk build
+
       - name: Lint
         run: pnpm -r --if-present lint
 
