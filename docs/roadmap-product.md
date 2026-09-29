@@ -277,7 +277,7 @@ Crate versions follow strict semver from v0.2 onwards. v0.1 is scaffold-only and
 
 ## Now
 
-As of 2026-08-20: `pulsar-core` has shipped `v0.1.0-contracts`, with the `pulsar-showcase` contract deployed to testnet at `CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L` and its decoder crate still a placeholder. `pulsar-app` is in Sprint 2: the monorepo scaffold and context files are complete with CI green, and the TypeScript SDK is the next thing to build. No deployments yet on the app side, and nothing is published to npm or crates.io.
+As of 2026-08-20: `pulsar-core` has shipped `v0.1.0-contracts`, with the `pulsar-showcase` contract deployed to testnet at `CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L` and its decoder crate still a placeholder. `pulsar-app` is in Sprint 4: the monorepo scaffold and context files are complete with CI green, and the TypeScript SDK is the next thing to build. No deployments yet on the app side, and nothing is published to npm or crates.io.
 
 ---
 
