@@ -1770,5 +1770,56 @@ ADR-044 gated the indexer's write routes behind a static bearer token, added the
   - **The 16-character minimum is a length floor, not entropy (informational):** it matches ADR-044 and the server contract. No change; token entropy stays a server-side concern, since the SDK cannot assess the randomness of a caller-supplied secret.
 - **The pulsar-docs companion still grows.** Per ADR-009 and ADR-044, the auth scheme, the `unauthorized` class and 401, and the `adminToken` config belong in the sibling `pulsar-stellar/pulsar-docs` repo; this repo's PR cannot carry them. The obligation stays recorded there and in ADR-044.
 
+## ADR-046: The explorer's data layer is Hybrid and reuses the SDK's Zod schemas without shipping its decoder
+Date: 2026-09-29
+Status: accepted
+
+### Context
+
+Sprint 6 builds the Next.js explorer over the indexer's read-only GraphQL surface (ADR-043). Two questions had to be settled before any screen: where the GraphQL fetch and its validation run, and how much of `@pulsar-stellar/sdk` the explorer reuses. The SDK is the existing authority on the event and contract shapes and on identifier and filter validation, but its barrel statically imports `@stellar/stellar-sdk`, a large Node-oriented XDR library, through `decode.ts`, `contract.ts`, and `rpc.ts`, and the package exports only its root entry (no subpath), so importing any SDK symbol pulls the whole barrel. The indexer has already decoded XDR into the ADR-023 taxonomy, so the explorer never needs to decode on its own.
+
+### Decision
+
+**The data layer is Hybrid: server-side by default, with a thin browser-facing refetch route.** Initial loads run in Server Components and Node route handlers: `executeGraphQL` POSTs to the indexer, validates the `{ data, errors }` envelope, and returns parsed data. Interactive refetches (pagination, filter changes) call one Next route handler, `POST /api/graphql`, rather than a searchParams round-trip. The route's `runtime` is `nodejs`, never Edge or the browser, so `@stellar/stellar-sdk` stays server-side and never enters the client bundle. Which of the two mechanisms a given screen uses is a per-screen choice deferred to the screen PRs.
+
+**The browser-facing route is an operation allowlist, not a GraphQL proxy.** The browser posts `{ operation, variables }`; `dispatch` maps a fixed set of operation names (`health`, `contract`, `event`, `events`, `contractWithEvents`) to typed wrappers whose GraphQL query documents are server-side constants. An operation the allowlist does not name never reaches the indexer, and no browser input becomes part of a query string; only bound variables cross the wire. The route bounds the body at 16 KiB, parses JSON, and shapes `{ data }` on success or `{ error: { category, code, message } }` with an HTTP status derived from the error category, reusing the same generic client-safe messages the transport already carries.
+
+**The SDK's Zod schemas are reused for boundary validation; its decoder is not called.** `schemas.ts` reuses `DecodedEventSchema`, `ContractIdSchema`, and `ContractStatusSchema`, so the explorer and SDK cannot drift; a GraphQL `Event` maps onto `DecodedEventSchema` field-for-field. The explorer trusts the indexer's decode output (it never calls `decodeScVal`) and validates that taxonomy on arrival. Identifier validation reuses `ContractIdSchema` and `EventIdSchema` in the wrappers, so a malformed id is rejected before a network round-trip with the same catalog code (`VALIDATION_CONTRACT_ID` or `VALIDATION_EVENT_ID`) the indexer would return. Filter arguments are forwarded as given: the indexer is the single authority on the ledger bounds, the limit ceiling, and the order enum, and returns its own `VALIDATION_*` codes, which the client surfaces unchanged. The dispatch boundary validates only the GraphQL transport types of variables (Int to number, String to string) so a gross type error is rejected early without duplicating the indexer's business rules.
+
+**Indexer-reported errors are read before the data shape is validated.** `executeGraphQL` parses the envelope loosely, and if `errors` is present it throws a categorized `GraphQLRequestError` (via the `categoryForCode` prefix mapping) before holding `data` to its schema, so a field-level indexer error surfaces as the indexer's own code rather than an opaque shape mismatch. A transport failure maps to `network`, and an unparseable envelope or a data shape mismatch to `internal`.
+
+### Alternatives considered
+
+**Client-side fetching.** Rejected. It would require `@stellar/stellar-sdk` in the browser bundle (via the SDK barrel), or an SDK package change to add a schemas-only subpath export and a republish. The Hybrid boundary keeps the fetch and validation in Node, reuses the barrel as-is, and was confirmed to keep the client bundle at about 102 KB with the SDK absent.
+
+**Pure server-side, a searchParams round-trip for every refetch.** Rejected as the sole mechanism. A filter or page change would reload the route through the URL and lose client-side interactivity; the thin refetch route keeps interactive updates without exposing an arbitrary-query proxy.
+
+**An arbitrary-query GraphQL proxy at `/api/graphql`.** Rejected. Forwarding a browser-supplied query string would hand a public endpoint the full GraphQL surface and its cost-amplification exposure (ADR-043's known bound) with no allowlist. The operation allowlist forwards only bound variables against server-side query constants.
+
+**Restating the event and contract shapes locally instead of reusing the SDK schemas.** Rejected: two copies of the taxonomy would drift. Reuse ties the explorer's boundary to the SDK's already-validated shapes.
+
+### Consequences
+
+- The explorer reads the indexer over GraphQL through a single validated boundary and does no XDR decoding of its own. The client bundle does not carry `@stellar/stellar-sdk`; the accepted cost is that the SDK barrel drags it into the server-side install, which is fine in Node.
+- The browser-facing `POST /api/graphql` is public and read-only, consistent with the indexer's public GraphQL surface (ADR-043) and its step-72 posture (ADR-044). It adds no auth and no new env var (`NEXT_PUBLIC_PULSAR_INDEXER_URL` already exists). It is an allowlist over server-side query constants, not a proxy.
+- Validation is split by authority: identifier format is checked client-side for a fast, catalog-coded rejection; filter and business rules stay with the indexer, so the two never diverge.
+<!-- ADR-046-REVIEW-ANCHOR -->
+
+### Security review
+
+The `security-review` skill applies (this PR adds a public HTTP surface). The `security-reviewer` subagent ran at `model: opus` over the seven data-layer files (`env.ts`, `graphql/client.ts`, `graphql/errors.ts`, `graphql/schemas.ts`, `graphql/queries.ts`, `graphql/dispatch.ts`, `api/graphql/route.ts`). It confirmed the load-bearing posture: no query injection (query documents are server-side constants; user input crosses only as bound variables), no SSRF (the target is the deploy-fixed `NEXT_PUBLIC_PULSAR_INDEXER_URL`, `http(s)`-validated in `env.ts`), allowlist integrity (`.strict()` var schemas, five fixed operations, unknown operations rejected with no round-trip), no cause leakage (the `GraphQLRequestError.cause` is never serialized), and linear, anchored identifier regexes (no ReDoS). No CRITICAL or HIGH finding. The five hardening findings and their dispositions, all landed in this PR:
+
+- **Body cap applied after buffering (MEDIUM).** `request.text()` fully buffered the body before the size check, and the cap counted UTF-16 code units, not bytes. Fixed: the route now rejects on a `Content-Length` header over the cap, then streams the body with a running byte budget and aborts once it is exceeded, so an oversized or slow-streamed body never fully buffers.
+- **No rate limiting on the public route (MEDIUM).** Fixed: a process-local fixed-window limiter (`lib/http/rate-limit.ts`, 60 requests per minute per client key from the first `x-forwarded-for` hop) caps the cheap-in / amplify-out cost, returning 429 with `Retry-After`. It bounds a single instance and resets on restart; a deployment fronted by more than one instance needs a shared store (Redis or an edge limiter) for a global cap, recorded here as the production follow-up. The indexer's own read deadline (ADR-044) still bounds per-request cost behind it.
+- **No `server-only` guard on the SDK-importing modules (MEDIUM).** The CLAUDE.md non-negotiable that `@stellar/stellar-sdk` never reaches the browser rested on nobody importing these modules from a Client Component. Fixed: `client.ts`, `queries.ts`, `dispatch.ts`, and `schemas.ts` import `server-only`, so an accidental client import fails the build instead of silently shipping the SDK. Tests resolve the marker to its empty server stub through a vitest alias.
+- **Indexer `message` forwarded verbatim (LOW).** Fixed as defense in depth: the route surfaces the wire message only for `validation` and `not_found`; for `network`, `internal`, and `unknown` it returns a fixed generic string and keeps only the machine-readable `code`, so a stray non-catalog upstream error cannot leak detail to the browser.
+- **Config fault bypassed the shaped-error path (LOW).** `getIndexerBaseUrl()` ran outside the request `try`, so a missing or malformed URL threw an unshaped error. Fixed: the resolution is wrapped and mapped to an `internal` `GraphQLRequestError` with a generic message that does not echo the configured URL.
+
+### pulsar-docs companion owed
+
+GraphQL is now consumed by a public explorer surface. The pulsar-docs companion already owed for the indexer's GraphQL API (ADR-009, ADR-043) is the home for this consumer contract too; no doc lands in this repo (ADR-009: docs live in the sibling `pulsar-stellar/pulsar-docs`). The explorer's own README arrives at the end of Sprint 6.
+
+
+
 
 

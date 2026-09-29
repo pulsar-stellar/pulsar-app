@@ -21,6 +21,13 @@ export default defineConfig({
     // Mirror the tsconfig `@/*` path alias; Vite does not read tsconfig paths.
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // The data layer marks itself `server-only`; that package throws on import
+      // under any condition but Next's `react-server`. Tests run the modules
+      // directly in Node, so resolve the marker to its empty server stub, the
+      // same file Next serves a Server Component.
+      'server-only': fileURLToPath(
+        new URL('./node_modules/server-only/empty.js', import.meta.url),
+      ),
     },
   },
   test: {
