@@ -1,6 +1,8 @@
+import { ContractLookupForm } from '@/components/contract-lookup-form';
+
 export default function HomePage() {
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3">
         <h1 className="text-3xl font-semibold tracking-tight">
           Explore Soroban contract events
@@ -12,12 +14,14 @@ export default function HomePage() {
         </p>
       </section>
 
-      <section
-        aria-label="Coming soon"
-        className="rounded-lg border border-dashed border-border p-6 text-sm text-muted-foreground"
-      >
-        The contract lookup lands next. This scaffold wires up the App Router,
-        the design tokens, and the test harness the explorer screens build on.
+      <section aria-labelledby="lookup-heading" className="flex flex-col gap-3">
+        <h2 id="lookup-heading" className="text-sm font-medium">
+          Look up a contract
+        </h2>
+        <ContractLookupForm />
+        <p className="text-sm text-muted-foreground">
+          A contract ID is 56 characters and starts with C.
+        </p>
       </section>
     </div>
   );
