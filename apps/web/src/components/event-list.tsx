@@ -9,8 +9,10 @@ import { type EventNode } from '@/lib/graphql/schemas';
  *
  * Presentational and read-only: it renders whatever page of events it is given
  * and shows an empty state for none. Filtering, ordering, and pagination live in
- * the interactive panel that will wrap this list; keeping the list dumb lets
- * both the server-rendered first page and that panel share it unchanged.
+ * the interactive panel that wraps this list; keeping the list dumb lets both
+ * the server-rendered first page and that panel share it unchanged. The empty
+ * state is neutral ("no events to show") because the same list renders both an
+ * unfiltered contract and a filtered query that matched nothing.
  */
 
 /** An event with no decoded name degrades to this label rather than a blank row (ADR-026). */
@@ -56,7 +58,7 @@ export function EventList({ events }: EventListProps) {
   if (events.length === 0) {
     return (
       <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-        No events yet for this contract.
+        No events to show.
       </p>
     );
   }
