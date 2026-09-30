@@ -79,6 +79,6 @@ describe('EventList', () => {
 
   it('renders an empty state when there are no events', () => {
     render(<EventList events={[]} />);
-    expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no events to show/i)).toBeInTheDocument();
   });
 });
