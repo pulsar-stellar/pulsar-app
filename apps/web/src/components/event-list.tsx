@@ -1,5 +1,6 @@
 import Link from 'next/link';
 
+import { EmptyState } from '@/components/empty-state';
 import { formatInteger, formatTimestamp, truncateMiddle } from '@/lib/format';
 import { type EventNode } from '@/lib/graphql/schemas';
 
@@ -35,7 +36,7 @@ function EventRow({ event }: EventRowProps) {
             {named ? event.name : UNNAMED_LABEL}
           </span>
           {!event.inSuccessfulContractCall && (
-            <span className="rounded-full border border-amber-500 px-2 py-0.5 text-xs font-medium text-amber-600">
+            <span className="rounded-full border border-amber-500 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
               Reverted
             </span>
           )}
@@ -43,7 +44,10 @@ function EventRow({ event }: EventRowProps) {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span>Ledger {formatInteger(event.ledger)}</span>
           <span>{formatTimestamp(event.emittedAt)}</span>
-          <span className="font-mono">{truncateMiddle(event.txHash)}</span>
+          <span className="font-mono" title={event.txHash}>
+            <span className="sr-only">Transaction </span>
+            <span>{truncateMiddle(event.txHash)}</span>
+          </span>
         </div>
       </Link>
     </li>
@@ -56,11 +60,7 @@ interface EventListProps {
 
 export function EventList({ events }: EventListProps) {
   if (events.length === 0) {
-    return (
-      <p className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-        No events to show.
-      </p>
-    );
+    return <EmptyState>No events to show.</EmptyState>;
   }
 
   return (

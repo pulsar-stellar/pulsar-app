@@ -32,7 +32,7 @@ interface DecodedValueViewProps {
 /** A small muted label naming the value's decoded type. */
 function TypeTag({ type }: { type: string }) {
   return (
-    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
+    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground/70">
       {type}
     </span>
   );

@@ -44,6 +44,7 @@ export function EventsPanel({
   const [cursor, setCursor] = useState<string | null>(initialCursor);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState('');
 
   const controllerRef = useRef<AbortController | null>(null);
   useEffect(() => () => controllerRef.current?.abort(), []);
@@ -52,6 +53,7 @@ export function EventsPanel({
     if (cursor === null || loading) return;
     setLoading(true);
     setError(null);
+    setAnnounce('Loading more events…');
 
     controllerRef.current?.abort();
     const controller = new AbortController();
@@ -64,8 +66,11 @@ export function EventsPanel({
       );
       setEvents((current) => [...current, ...page.items]);
       setCursor(page.nextCursor);
+      const n = page.items.length;
+      setAnnounce(`${n} more ${n === 1 ? 'event' : 'events'} loaded`);
     } catch (cause) {
       setError(cause instanceof EventFetchError ? cause.message : GENERIC_ERROR);
+      setAnnounce('');
     } finally {
       setLoading(false);
     }
@@ -76,6 +81,10 @@ export function EventsPanel({
       <EventFiltersForm filters={filters} />
 
       <EventList events={events} />
+
+      <p role="status" aria-live="polite" className="sr-only">
+        {announce}
+      </p>
 
       {error !== null && (
         <p role="alert" className="text-sm text-destructive">
@@ -90,6 +99,7 @@ export function EventsPanel({
             variant="outline"
             onClick={() => void loadMore()}
             disabled={loading}
+            aria-busy={loading}
           >
             {loading ? 'Loading…' : 'Load more'}
           </Button>

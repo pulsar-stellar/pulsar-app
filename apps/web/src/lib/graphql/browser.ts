@@ -1,8 +1,8 @@
 import { type EventFilters } from '@/lib/events-filters';
-import { type EventConnection } from '@/lib/graphql/schemas';
+import { type EventConnection, type Health } from '@/lib/graphql/schemas';
 
 /**
- * The browser-side transport for interactive event pagination.
+ * The browser-side transport for interactive refetches.
  *
  * This is the one piece that runs in the browser and talks to the explorer's
  * own `/api/graphql` route (never the indexer directly). That route has already
@@ -25,7 +25,7 @@ interface FetchOptions {
   fetchImpl?: typeof fetch;
 }
 
-/** A failed page request, carrying the category and catalog code for the caller. */
+/** A failed dispatch request, carrying the category and catalog code for the caller. */
 export class EventFetchError extends Error {
   readonly category: string;
   readonly code: string | null;
@@ -67,41 +67,31 @@ function readError(body: unknown): {
   return { category: 'unknown', code: null, message: GENERIC_MESSAGE };
 }
 
-/** Structurally confirm the success payload is an event connection. */
-function asEventConnection(data: unknown): EventConnection {
-  if (
-    typeof data === 'object' &&
-    data !== null &&
-    'items' in data &&
-    Array.isArray((data).items)
-  ) {
-    return data as EventConnection;
-  }
-  throw new EventFetchError(
-    'The explorer returned an unexpected response',
-    'internal',
-    null,
-  );
-}
-
 /**
- * Fetch one page of a contract's events through the explorer's dispatch route.
+ * POST one allowlisted operation to `/api/graphql` and guard its data.
  *
- * @throws EventFetchError on a transport failure, a non-OK response (carrying
- * the route's category and code), or an unexpected payload shape.
+ * Shared by every browser-side fetch: it maps a transport failure, a malformed
+ * body, and a non-OK response to an {@link EventFetchError}, then hands the
+ * success payload to a caller-supplied structural guard.
+ *
+ * @throws EventFetchError on any of those failures or an unexpected shape.
  */
-export async function fetchEventsPage(
-  variables: FetchEventsVariables,
-  options: FetchOptions = {},
-): Promise<EventConnection> {
+async function postOperation<T>(
+  operation: string,
+  variables: unknown,
+  guard: (data: unknown) => T,
+  options: FetchOptions,
+): Promise<T> {
   const doFetch = options.fetchImpl ?? fetch;
+  const payload =
+    variables === undefined ? { operation } : { operation, variables };
 
   let response: Response;
   try {
     response = await doFetch('/api/graphql', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ operation: 'events', variables }),
+      body: JSON.stringify(payload),
       signal: options.signal ?? null,
     });
   } catch (cause) {
@@ -125,5 +115,63 @@ export async function fetchEventsPage(
     throw new EventFetchError(error.message, error.category, error.code);
   }
 
-  return asEventConnection((body as { data?: unknown }).data);
+  return guard((body as { data?: unknown }).data);
+}
+
+/** Structurally confirm the success payload is an event connection. */
+function asEventConnection(data: unknown): EventConnection {
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    'items' in data &&
+    Array.isArray((data).items)
+  ) {
+    return data as EventConnection;
+  }
+  throw new EventFetchError(
+    'The explorer returned an unexpected response',
+    'internal',
+    null,
+  );
+}
+
+/** Structurally confirm the success payload is a health record. */
+function asHealth(data: unknown): Health {
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    typeof (data as { ok?: unknown }).ok === 'boolean' &&
+    typeof (data as { version?: unknown }).version === 'string' &&
+    typeof (data as { latestLedger?: unknown }).latestLedger === 'number'
+  ) {
+    return data as Health;
+  }
+  throw new EventFetchError(
+    'The explorer returned an unexpected response',
+    'internal',
+    null,
+  );
+}
+
+/**
+ * Fetch one page of a contract's events through the explorer's dispatch route.
+ *
+ * @throws EventFetchError on a transport failure, a non-OK response (carrying
+ * the route's category and code), or an unexpected payload shape.
+ */
+export function fetchEventsPage(
+  variables: FetchEventsVariables,
+  options: FetchOptions = {},
+): Promise<EventConnection> {
+  return postOperation('events', variables, asEventConnection, options);
+}
+
+/**
+ * Fetch the indexer's health through the explorer's dispatch route.
+ *
+ * @throws EventFetchError on a transport failure, a non-OK response, or an
+ * unexpected payload shape, which the caller reads as "indexer unreachable".
+ */
+export function fetchHealth(options: FetchOptions = {}): Promise<Health> {
+  return postOperation('health', undefined, asHealth, options);
 }

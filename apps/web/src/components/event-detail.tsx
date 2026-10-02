@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { type ReactNode } from 'react';
 
 import { DecodedValueView } from '@/components/decoded-value';
+import { EmptyState } from '@/components/empty-state';
 import { formatInteger, formatTimestamp } from '@/lib/format';
 import { type EventNode } from '@/lib/graphql/schemas';
 
@@ -50,7 +51,7 @@ export function EventDetail({ event }: EventDetailProps) {
           {named ? event.name : UNNAMED_LABEL}
         </h1>
         {!event.inSuccessfulContractCall && (
-          <span className="rounded-full border border-amber-500 px-2 py-0.5 text-xs font-medium text-amber-600">
+          <span className="rounded-full border border-amber-500 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-400">
             Reverted
           </span>
         )}
@@ -85,9 +86,7 @@ export function EventDetail({ event }: EventDetailProps) {
           Topics
         </h2>
         {event.topics.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border px-4 py-6 text-center text-sm text-muted-foreground">
-            No topics.
-          </p>
+          <EmptyState>No topics.</EmptyState>
         ) : (
           <ol className="flex flex-col gap-2">
             {event.topics.map((topic, index) => (

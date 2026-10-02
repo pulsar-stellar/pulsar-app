@@ -22,6 +22,7 @@ describe('EventJsonExport', () => {
 
     expect(writeText).toHaveBeenCalledWith(JSON_TEXT);
     expect(await screen.findByRole('button', { name: /copied/i })).toBeInTheDocument();
+    expect(screen.getByText('Copied to clipboard')).toBeInTheDocument();
   });
 
   it('keeps the original label when the copy fails', async () => {
@@ -37,7 +38,7 @@ describe('EventJsonExport', () => {
     fireEvent.click(screen.getByRole('button', { name: /copy json/i }));
 
     // The promise rejects; the label must not flip to "Copied".
-    await Promise.resolve();
+    expect(await screen.findByText('Copy failed')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /copy json/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /copied/i })).not.toBeInTheDocument();
   });
