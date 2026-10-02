@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatInteger, formatTimestamp, truncateMiddle } from '@/lib/format';
+import {
+  formatDurationSeconds,
+  formatInteger,
+  formatTimestamp,
+  formatUnixSeconds,
+  truncateMiddle,
+} from '@/lib/format';
 
 describe('formatTimestamp', () => {
   it('renders an ISO timestamp as a stable UTC string', () => {
@@ -43,5 +49,39 @@ describe('truncateMiddle', () => {
 
   it('returns a value that is already short enough unchanged', () => {
     expect(truncateMiddle('CDNWTV')).toBe('CDNWTV');
+  });
+});
+
+describe('formatUnixSeconds', () => {
+  it('derives a UTC date from a second count', () => {
+    // 1609459200 = 2021-01-01T00:00:00Z
+    expect(formatUnixSeconds('1609459200')).toBe('Jan 01, 2021, 00:00:00 UTC');
+  });
+
+  it('handles the epoch', () => {
+    expect(formatUnixSeconds('0')).toBe('Jan 01, 1970, 00:00:00 UTC');
+  });
+
+  it('returns null for a non-digit or unsafe value', () => {
+    expect(formatUnixSeconds('not-a-number')).toBeNull();
+    expect(formatUnixSeconds('')).toBeNull();
+    // Past the safe-integer range for seconds, so no trustworthy date.
+    expect(formatUnixSeconds('99999999999999999999')).toBeNull();
+  });
+});
+
+describe('formatDurationSeconds', () => {
+  it('renders a compact span', () => {
+    expect(formatDurationSeconds('0')).toBe('0s');
+    expect(formatDurationSeconds('45')).toBe('45s');
+    expect(formatDurationSeconds('90')).toBe('1m 30s');
+    expect(formatDurationSeconds('3661')).toBe('1h 1m 1s');
+    expect(formatDurationSeconds('90061')).toBe('1d 1h 1m 1s');
+  });
+
+  it('returns null for a non-digit or unsafe value', () => {
+    expect(formatDurationSeconds('abc')).toBeNull();
+    expect(formatDurationSeconds('')).toBeNull();
+    expect(formatDurationSeconds('99999999999999999999')).toBeNull();
   });
 });
