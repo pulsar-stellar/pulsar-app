@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { SiteHeader } from '@/components/site-header';
 
+// The header embeds the HealthIndicator, which fetches on mount; stub the
+// transport so the header renders deterministically in isolation.
+const fetchHealth = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/graphql/browser', async () => {
+  const actual = await vi.importActual<Record<string, unknown>>('@/lib/graphql/browser');
+  return { ...actual, fetchHealth };
+});
+fetchHealth.mockResolvedValue({
+  ok: true,
+  version: '0.1.0',
+  latestLedger: 1,
+  trackedContracts: 0,
+});
+
 // next/link expects the App Router context, which a unit render does not mount.
 // Swap it for a plain anchor so the header can be rendered in isolation.
 vi.mock('next/link', () => ({

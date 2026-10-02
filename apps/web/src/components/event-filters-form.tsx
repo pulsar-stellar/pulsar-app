@@ -80,6 +80,7 @@ export function EventFiltersForm({ filters }: EventFiltersFormProps) {
   return (
     <form
       onSubmit={handleSubmit}
+      aria-label="Event filters"
       className="flex flex-col gap-3 rounded-md border border-border p-4"
     >
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -117,6 +118,7 @@ export function EventFiltersForm({ filters }: EventFiltersFormProps) {
             min={0}
             step={1}
             inputMode="numeric"
+            aria-describedby={`${ids}-ledger-hint`}
             value={from}
             onChange={(event) => setFrom(event.target.value)}
             placeholder="0"
@@ -132,12 +134,16 @@ export function EventFiltersForm({ filters }: EventFiltersFormProps) {
             min={0}
             step={1}
             inputMode="numeric"
+            aria-describedby={`${ids}-ledger-hint`}
             value={to}
             onChange={(event) => setTo(event.target.value)}
             placeholder="latest"
           />
         </div>
       </div>
+      <p id={`${ids}-ledger-hint`} className="text-xs text-muted-foreground">
+        Ledger bounds are non-negative integers; invalid values are ignored.
+      </p>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-1">
           <label htmlFor={`${ids}-order`} className="text-xs font-medium text-muted-foreground">

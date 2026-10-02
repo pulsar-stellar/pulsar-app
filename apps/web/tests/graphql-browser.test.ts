@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { EventFetchError, fetchEventsPage } from '@/lib/graphql/browser';
+import { EventFetchError, fetchEventsPage, fetchHealth } from '@/lib/graphql/browser';
 
 const CONTRACT_ID = 'CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L';
 
@@ -76,5 +76,37 @@ describe('fetchEventsPage', () => {
     await expect(
       fetchEventsPage({ contractId: CONTRACT_ID }, { fetchImpl }),
     ).rejects.toMatchObject({ category: 'internal' });
+  });
+});
+
+describe('fetchHealth', () => {
+  it('posts the health operation with no variables and returns the record', async () => {
+    const fetchImpl = fetchReturning(true, {
+      data: { ok: true, version: '0.1.0', latestLedger: 1284913, trackedContracts: 3 },
+    });
+
+    const health = await fetchHealth({ fetchImpl });
+
+    expect(health).toMatchObject({ ok: true, latestLedger: 1284913 });
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    const [url, init] = call as [string, RequestInit];
+    expect(url).toBe('/api/graphql');
+    expect(JSON.parse(init.body as string)).toEqual({ operation: 'health' });
+  });
+
+  it('rejects a health payload missing required fields', async () => {
+    const fetchImpl = fetchReturning(true, { data: { ok: true } });
+
+    await expect(fetchHealth({ fetchImpl })).rejects.toMatchObject({
+      category: 'internal',
+    });
+  });
+
+  it('maps a non-OK health response to an EventFetchError', async () => {
+    const fetchImpl = fetchReturning(false, {
+      error: { category: 'internal', code: 'INTERNAL_STORE', message: 'store down' },
+    });
+
+    await expect(fetchHealth({ fetchImpl })).rejects.toBeInstanceOf(EventFetchError);
   });
 });

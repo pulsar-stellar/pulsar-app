@@ -1,12 +1,13 @@
 import Link from 'next/link';
 
+import { HealthIndicator } from '@/components/health-indicator';
+
 /**
  * The persistent top bar shown on every route.
  *
- * Presentational and server-rendered: it holds the product mark and a link home
- * and nothing interactive, so it stays a Server Component. Interactive pieces
- * (the contract lookup field) live in their own client components on the pages
- * that need them.
+ * Server-rendered, holding the product mark and a link home. The only
+ * interactive piece is the health indicator, a small client island on the
+ * right; the rest stays a Server Component.
  */
 export function SiteHeader() {
   return (
@@ -24,9 +25,9 @@ export function SiteHeader() {
           <span>Pulsar</span>
           <span className="text-muted-foreground font-normal">Explorer</span>
         </Link>
-        <span className="ml-auto text-sm text-muted-foreground">
-          Soroban contract events
-        </span>
+        <div className="ml-auto">
+          <HealthIndicator />
+        </div>
       </div>
     </header>
   );

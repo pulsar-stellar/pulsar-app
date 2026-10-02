@@ -26,6 +26,7 @@ const COPIED_RESET_MS = 2000;
 
 export function EventJsonExport({ json, filename }: EventJsonExportProps) {
   const [copied, setCopied] = useState(false);
+  const [message, setMessage] = useState('');
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
@@ -39,11 +40,16 @@ export function EventJsonExport({ json, filename }: EventJsonExportProps) {
     try {
       await navigator.clipboard.writeText(json);
       setCopied(true);
-      resetTimer.current = setTimeout(() => setCopied(false), COPIED_RESET_MS);
+      setMessage('Copied to clipboard');
+      resetTimer.current = setTimeout(() => {
+        setCopied(false);
+        setMessage('');
+      }, COPIED_RESET_MS);
     } catch {
-      // Clipboard access can be denied; leave the label unchanged rather than
+      // Clipboard access can be denied; report the failure rather than
       // claiming a copy that did not happen.
       setCopied(false);
+      setMessage('Copy failed');
     }
   }
 
@@ -65,8 +71,11 @@ export function EventJsonExport({ json, filename }: EventJsonExportProps) {
         {copied ? 'Copied' : 'Copy JSON'}
       </Button>
       <Button type="button" variant="outline" onClick={handleDownload}>
-        Download
+        Download JSON
       </Button>
+      <span role="status" aria-live="polite" className="sr-only">
+        {message}
+      </span>
     </div>
   );
 }

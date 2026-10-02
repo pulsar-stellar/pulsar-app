@@ -35,12 +35,12 @@ export function ContractSummary({ contract }: ContractSummaryProps) {
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-border p-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <h1 className="flex flex-col gap-1">
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Contract
-          </h1>
-          <p className="break-all font-mono text-sm">{contract.id}</p>
-        </div>
+          </span>
+          <span className="break-all font-mono text-sm">{contract.id}</span>
+        </h1>
         <StatusBadge status={contract.status} />
       </div>
 
