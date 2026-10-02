@@ -96,3 +96,10 @@ export type EventConnection = z.infer<typeof eventConnectionSchema>;
 export type ContractNode = z.infer<typeof contractNodeSchema>;
 export type Health = z.infer<typeof healthSchema>;
 export type GraphQLErrorObject = z.infer<typeof graphqlErrorSchema>;
+
+/**
+ * The decoded-value taxonomy (ADR-023), re-exported from the SDK so the UI has a
+ * single boundary module for its types. Type-only, so it adds no runtime import
+ * and never pulls the SDK into a client bundle (ADR-046).
+ */
+export type { DecodedValue, DecodedMapEntry } from '@pulsar-stellar/sdk';
