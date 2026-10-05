@@ -152,7 +152,7 @@ static bearer token; every read route is public (ADR-044).
 curl -X POST http://localhost:8080/contracts \
   -H "Authorization: Bearer $PULSAR_INDEXER_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"id":"CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L"}'
+  -d '{"contract_id":"CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L"}'
 ```
 
 - The token comes from `PULSAR_INDEXER_ADMIN_TOKEN`, is required with no default,
