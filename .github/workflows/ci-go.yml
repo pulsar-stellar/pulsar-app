@@ -21,6 +21,27 @@ jobs:
   check:
     name: fmt, vet, test, build
     runs-on: ubuntu-latest
+
+    # The Postgres-backed tests are gated on PULSAR_TEST_POSTGRES_DSN and skip
+    # without it, so this service is what turns them on in CI. The official
+    # image ships with TLS off, which is why the insecure opt-out is set below;
+    # a maintainer running against a server that offers TLS leaves it unset and
+    # exercises the ADR-031 guard for real.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pulsar
+          POSTGRES_PASSWORD: pulsar
+          POSTGRES_DB: pulsar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -41,8 +62,20 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test -race ./...
+      # Runs with no DSN, so the Postgres tests skip. This is what keeps
+      # ADR-003's promise honest: a contributor with only SQLite must get a
+      # green suite, and a test that stopped skipping would fail here.
+      - name: Test (SQLite only)
+        run: go test ./...
+
+      # The same suite with Postgres reachable. Serialized with -p 1 because
+      # internal/db and internal/store both reset the public schema of the one
+      # test database, so their packages must not run concurrently.
+      - name: Test (with Postgres)
+        env:
+          PULSAR_TEST_POSTGRES_DSN: postgres://pulsar:pulsar@127.0.0.1:5432/pulsar_test?sslmode=disable
+          PULSAR_TEST_POSTGRES_INSECURE: 'true'
+        run: go test -race -p 1 ./...
 
       - name: Build
         env:
