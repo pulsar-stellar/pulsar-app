@@ -1,4 +1,4 @@
-# Pulsar Stellar — Project Requirements Document
+# Pulsar Stellar: Project Requirements Document
 
 **Purpose**: single authoritative reference for external tools, test discipline, context folders, dependency management, and authenticity principles across both `pulsar-core` and `pulsar-app`.
 
@@ -40,26 +40,28 @@ The project depends on the following. Each entry includes: what it does, why we 
 - Credentials: `NPM_TOKEN` (automation token, not classic) in GitHub Actions secrets for `pulsar-app` repo (and `pulsar-core` for the wasm package)
 - Setup: create npm account with 2FA, create `@pulsar-stellar` scope, generate automation token before Sprint 6
 
-**Docker Hub** (optional, only if we push indexer images publicly)
-- Publishes: `pulsar-stellar/indexer` image
-- Alternative: GitHub Container Registry (`ghcr.io/pulsar-stellar/indexer`) if we want to keep everything in one place
-- Recommendation: use `ghcr.io`. No separate account needed.
+**Container registry** (for indexer images)
+- Target: `ghcr.io/pulsar-stellar/indexer`, decided in ADR-047, which confirms the recommendation this section already carried
+- Chosen over Docker Hub for credential surface: an Actions push uses the ambient `GITHUB_TOKEN`, so there is no long-lived registry token to store or rotate
+- Nothing is published yet. No `Dockerfile` exists, so no image has been built or pushed.
 
-### 1.3 Deployment
+### 1.3 Deployment (planned, nothing deployed)
+
+Nothing in this section is live, and no deployment artifact exists in this repo: no `deploy/` directory, no `render.yaml`, no `vercel.json`, no `Dockerfile`, no `docker-compose.yml`. The entries below are the target shape, not the current state. The platform split is recorded in ADR-010 and the packaging decisions in ADR-047; the files land in Phase J.
 
 **Vercel** (Next.js web explorer)
 - Hosts: `apps/web` from `pulsar-app`
 - Free tier is sufficient for the traffic level this project will see through v1.0
-- Setup: connect GitHub, set project root to `apps/web`, add environment variables via UI
+- Setup (planned): connect GitHub, set project root to `apps/web`, add environment variables via UI
 - Credentials: none in repo. All env vars in Vercel dashboard.
 
 **Render** (Go indexer + Postgres)
 - Hosts: indexer as a web service, Postgres as a managed database
 - Uses internal connection string when both are in the same region
-- Setup: connect GitHub, create service via `render.yaml`, provision Postgres in same region
+- Setup (planned): connect GitHub, create the service, provision Postgres in the same region. Whether the service is declared in a blueprint file or created through the dashboard, and where that file would live, is settled in Phase J against Render's current requirements rather than assumed here.
 - Credentials: none in repo. All env vars in Render dashboard. `DATABASE_URL` auto-provisioned by Render.
 
-Both are configured in `pulsar-app/deploy/`. Do not migrate everything to one platform to save on cognitive overhead; the split platforms are purpose-built and cheaper this way.
+Do not migrate everything to one platform to save on cognitive overhead. The split platforms are purpose-built and cheaper this way.
 
 ### 1.4 Documentation
 
@@ -108,7 +110,7 @@ Both are configured in `pulsar-app/deploy/`. Do not migrate everything to one pl
 
 ### 1.8 Local development toolchain
 
-Required on the developer machine before any sprint starts:
+Required on the developer machine before any sprint starts, except where a row scopes itself narrower:
 
 | Tool | Version | Install command | Purpose |
 |---|---|---|---|
@@ -117,8 +119,8 @@ Required on the developer machine before any sprint starts:
 | Rust | 1.84+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` | Contract + decoder |
 | Go | 1.23+ | Platform-specific (see go.dev/dl) | Indexer |
 | Stellar CLI | 27.0.0+ | `cargo install --locked stellar-cli` | Contract build + deploy |
-| Docker | 24+ | Platform-specific | Local Postgres, local indexer |
-| Docker Compose | v2+ | Bundled with modern Docker | Local dev stack |
+| Docker | 24+ | Platform-specific | Building the indexer image and running the planned compose stack. Not needed for the SQLite default path, and not needed to run the Postgres-backed tests, which reach any Postgres through `PULSAR_TEST_POSTGRES_DSN`. |
+| Docker Compose | v2+ | Bundled with modern Docker | The planned local indexer plus Postgres stack. `docker-compose.yml` is not yet written. |
 | Git | 2.40+ | Platform-specific | Version control |
 | `gh` CLI | Latest | Platform-specific | Issue creation script |
 
@@ -207,7 +209,7 @@ Coverage measured on `main` merges and reported as a PR comment. Coverage badges
 **Next.js frontend**:
 - Component tests via `vitest` + `@testing-library/react` for critical components
 - Route-level tests for filter state, URL sync, cursor pagination
-- E2E test via Playwright: paste showcase contract ID → see events → filter → expand row → export JSON. Runs locally against docker-compose stack; skipped in CI without env flag.
+- E2E test via Playwright (planned, not yet written): paste showcase contract ID, see events, filter, expand row, export JSON. It will run locally against the planned docker-compose stack and stay skipped in CI without an env flag. Playwright is not yet a dependency.
 
 ### 2.4 Test naming conventions
 
