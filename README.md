@@ -90,10 +90,10 @@ file would apply cleanly on both and silently corrupt one. See ADR-029.
 
 ## Status
 
-Sprint 3, closing Phase F. The SDK is released. The indexer runs as a daemon,
-stores events, and now serves its full HTTP API (REST and GraphQL) alongside the
-poller, with the write routes gated by authentication and rate limiting. The web
-explorer has not landed.
+Sprint 6 complete, deployment next. The SDK is released. The indexer runs as a
+daemon, stores events, and serves its full HTTP API (REST and GraphQL) alongside
+the poller, with the write routes gated by authentication and rate limiting. The
+web explorer is built and runs locally. Nothing is deployed yet.
 
 | Artifact | State |
 |---|---|
@@ -103,7 +103,9 @@ explorer has not landed.
 | Go indexer, REST API | served: health, contracts, and events routes |
 | Go indexer, GraphQL API | served: read-only `POST /graphql` (ADR-043) |
 | Go indexer, write gate | live: bearer auth plus rate limiting on writes (ADR-044) |
-| Web explorer | not in the tree, nothing deployed |
+| Postgres schema | verified: migrations applied to a real Postgres, in CI |
+| Web explorer | built: lookup, contract detail, event list, event detail |
+| Deployment | not started: no image, no hosted instance (ADR-047 decides the shape) |
 
 The daemon loads its configuration, opens the database, applies migrations,
 registers the bootstrap contracts, runs one polling loop per contract, and serves
@@ -116,8 +118,15 @@ write gate is a precondition of exposing the surface. Full detail, including eve
 environment variable and the SQLite versus Postgres split, is in
 [`indexer/README.md`](indexer/README.md).
 
-The web explorer has not landed. The workspace reserves `apps/*` for it, but
-`apps/web` is not present at this commit and nothing is deployed.
+The web explorer lives in [`apps/web`](apps/web). It reads the indexer over
+GraphQL through one validated boundary that reuses the SDK's Zod schemas but
+never its XDR decoder, so `@stellar/stellar-sdk` stays out of the browser bundle
+(ADR-046). Four screens are in place: a contract lookup, a contract detail page
+that fetches the contract and its first page of events in one nested query, an
+event list whose filters, ordering, and cursor pagination all live in the URL, and
+an event detail page that renders the decoded value taxonomy as a collapsible tree
+with a JSON export. Run it locally with `pnpm --filter ./apps/web dev`; see
+[`apps/web/README.md`](apps/web/README.md). There is no hosted instance yet.
 
 This repository depends on `pulsar-core` `v0.1.0-contracts`, deployed to Stellar
 testnet. Its showcase contract ID is the fixture every sub-stack here reads from,
