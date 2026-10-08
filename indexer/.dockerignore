@@ -1,0 +1,39 @@
+# Docker does not read .gitignore, so the artifacts ignored there are listed
+# again here. Without this, a host-built binary and any local SQLite database
+# would be shipped into the build context: wasted transfer at best, and a stale
+# binary sitting next to the one the builder produces at worst.
+#
+# Patterns are anchored or recursive deliberately, not uniformly. Docker's
+# patterns do not cross a / on their own, unlike git's, so a bare *.db matches
+# only the context root. Where recursion is safe it is spelled with **.
+#
+# pulsar-indexer is the exception and must stay anchored to the root. It is the
+# name of both the host build output and the source directory cmd/pulsar-indexer,
+# so a recursive **/pulsar-indexer excludes the package the image is built from
+# and the build fails with "stat /src/cmd/pulsar-indexer: directory not found".
+
+# Host build output, root only: see the note above.
+/pulsar-indexer
+/bin/
+
+# Coverage and profile output, safe to exclude at any depth.
+**/*.out
+
+# Local SQLite databases, including WAL and shared-memory sidecars.
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# Environment files. None belongs in this directory (the tracked template and
+# the developer's .env.local both live at the repository root, outside this
+# context), so this is a guard against one being created here later: git would
+# hide it, since the root .gitignore's .env patterns match at any depth, and it
+# would otherwise reach a builder layer, which a registry cache export would
+# then publish.
+**/.env
+**/.env.*
+
+# Not needed to compile.
+README.md
+Dockerfile
+.dockerignore
