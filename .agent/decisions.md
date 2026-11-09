@@ -1915,3 +1915,40 @@ The same run exposed a second defect on that path. A recovery whose drain found 
 - A quiet contract still re-enters the low side once the floor passes its recorded cursor, roughly every ten ticks on testnet, since an empty steady-state drain does not advance progress. Each re-entry is now one cheap, successful recovery rather than a failure. Advancing progress on empty drains from the response's `latestLedger` would remove it, and is a separate change.
 - Covered by `TestRangeErrorLowSideSurvivesAFloorThatMovesDuringRecovery`, which uses a fake RPC whose floor advances after every `getHealth`, plus tests for the empty-window commit and the clamp.
 
+## ADR-049: The drain pages until a scan slice reaches latestLedger and records the tip it scanned to (amends ADR-028)
+Date: 2026-11-09
+Status: accepted
+
+### Context
+
+ADR-028 settled that the `getEvents` cursor is present even on a zero-match page, so paging terminates on an empty events array rather than on the cursor. That held when it was recorded. It does not hold against public testnet on 2026-11-09.
+
+The live run that motivated ADR-048 stored nothing even after its fix. Two `deposit` calls on the showcase contract landed at the tip, and the poller never reached them. A direct probe showed why. From `startLedger` 5520030, with the tip at 5640969, testnet returned zero events and a cursor at ledger 5530029, exactly 10000 ledgers in. From 50 ledgers below the tip it returned a cursor at ledger 5641148, equal to that response's `latestLedger`. RPC scans a bounded slice per call, and an empty page means the slice held no match, not that the window is exhausted.
+
+So the drain read one 10000-ledger slice, saw an empty page, and stopped. With the tip about 120000 ledgers ahead, a contract quiet for more than about 14 hours of testnet ledgers never caught up. The same holds for a page that is not full but not empty: a slice with a few matches returns them short, with the cursor at the slice end.
+
+A second consequence followed. Progress advanced only to the highest event ledger, so a quiet contract never reached the tip, and ADR-036's caught-up steady state, the high-side `-32600` on a cursor past `latestLedger`, never arose for it.
+
+### Decision
+
+**Stop paging only on a page that is not full whose cursor ledger is at or past that response's `latestLedger`.** Both numbers come from the same response, read numerically, consistent with ADR-034 and ADR-036; no message text is read. A full page always continues, because its cursor is the last event's id and the same ledger can hold more events. A page that is not full but whose cursor is short of `latestLedger` ended a scan slice, so the drain continues from that cursor.
+
+**The tip the drain scanned to becomes the high-water mark.** When the drain stops, the cursor ledger, an end-of-window marker with the maximum event ordinal, is folded into the returned highest ledger. An empty drain that scanned past the stored progress now commits it. This is not progress past unfetched ledgers: they were scanned and held no match. A quiet contract therefore reaches the tip and settles on ADR-036's high side, and the next tick costs one `getEvents` call rather than a re-scan from the last event.
+
+**A cursor that does not advance is an error.** Paging no longer stops on any empty page, so a cursor that came back equal to the request's would loop forever. The drain refuses it and the tick fails into the normal backoff, with progress unchanged.
+
+### Alternatives considered
+
+**Page until the cursor ledger reaches a `latestLedger` read once from `getHealth` before the drain.** Rejected. It costs an extra call per tick, which ADR-036 avoided by reading `latestLedger` from the success response, and the tip moves during a long drain anyway. Each response already carries its own `latestLedger`.
+
+**Keep progress at the highest event ledger and accept the re-scan.** Rejected. For a quiet contract it means about twelve 10000-ledger calls every five seconds against a public RPC, indefinitely, and it keeps the contract off ADR-036's steady state.
+
+**Hardcode the 10000-ledger slice.** Rejected. The slice size is RPC configuration, not protocol. The rule above needs no knowledge of it.
+
+### Consequences
+
+- Amends ADR-028's termination rule. Its finding that the cursor is present on a zero-match page still stands, and is what this rule reads.
+- A freshly registered contract or one behind by days now drains to the tip in one tick, at one call per 10000 ledgers: about 12 calls for testnet's full 120960-ledger window.
+- ADR-048's consequence that a quiet contract re-enters the low side about every ten ticks no longer holds. Progress now reaches the tip, so the floor does not overtake it.
+- Tests that assumed the old rule were updated to it: the empty-page test now expects progress at the scanned tip, two scripted replies gained the end-of-window cursor real RPC always sends, and ADR-048's three tests now expect progress at the tip their drain reaches. New tests cover a 10000-ledger scan cap with events near the tip, which reproduced the live failure before the fix, and a non-advancing cursor.
+

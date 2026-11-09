@@ -203,7 +203,7 @@ func TestTickStoresADecodedPageAndAdvancesTheCursor(t *testing.T) {
 				Events: []protocol.EventInfo{
 					event(t, 4430000, 0, "transfer_topic0", "deposit_data", true),
 				},
-				Cursor:       endOfWindowCursor(4430000),
+				Cursor:       endOfWindowCursor(4430005),
 				LatestLedger: 4430005,
 			}},
 		},
@@ -234,8 +234,8 @@ func TestTickStoresADecodedPageAndAdvancesTheCursor(t *testing.T) {
 	if want := `{"type":"i128","value":"5000"}`; string(got.DataJSON) != want {
 		t.Errorf("data_json = %s, want %s", got.DataJSON, want)
 	}
-	if p := progress(t, handle); p != 4430000 {
-		t.Errorf("progress = %d, want 4430000", p)
+	if p := progress(t, handle); p != 4430005 {
+		t.Errorf("progress = %d, want 4430005, the tip the drain scanned to (ADR-049)", p)
 	}
 }
 
@@ -248,7 +248,7 @@ func TestTickStartsFromTheLedgerAfterProgress(t *testing.T) {
 	}
 	caller := &mockCaller{
 		eventsQueue: []eventsReply{
-			{resp: protocol.GetEventsResponse{LatestLedger: 4430010}},
+			{resp: protocol.GetEventsResponse{Cursor: endOfWindowCursor(4430010), LatestLedger: 4430010}},
 		},
 	}
 	p := newPoller(t, caller, handle)
@@ -375,11 +375,15 @@ func TestRangeErrorHighSideHoldsPositionWhenCaughtUp(t *testing.T) {
 
 // slidingFloorCaller is an RPC whose retention floor advances by drift after
 // every getHealth, the way public testnet prunes a ledger per close. getEvents
-// rejects a startLedger outside the live window with -32600, as RPC does.
+// rejects a startLedger outside the live window with -32600, and, when scanCap
+// is set, scans at most that many ledgers per call, answering a slice with no
+// matches with an empty page whose cursor marks the slice end, as testnet does.
 type slidingFloorCaller struct {
-	floor, latest, drift uint32
-	events               []protocol.EventInfo
-	starts               []uint32
+	floor, latest, drift, scanCap uint32
+	events                        []protocol.EventInfo
+	starts                        []uint32
+	calls                         int
+	stuckCursor                   bool
 }
 
 func (c *slidingFloorCaller) GetHealth(_ context.Context) (protocol.GetHealthResponse, error) {
@@ -389,21 +393,34 @@ func (c *slidingFloorCaller) GetHealth(_ context.Context) (protocol.GetHealthRes
 }
 
 func (c *slidingFloorCaller) GetEvents(_ context.Context, req protocol.GetEventsRequest) (protocol.GetEventsResponse, error) {
-	if req.StartLedger == 0 {
-		// A cursor-paged follow-up: everything was served on the first page.
-		return protocol.GetEventsResponse{Cursor: endOfWindowCursor(c.latest)}, nil
+	c.calls++
+	from := req.StartLedger
+	if from == 0 {
+		cursor := *req.Pagination.Cursor
+		if c.stuckCursor {
+			return protocol.GetEventsResponse{Cursor: cursor.String(), LatestLedger: c.latest}, nil
+		}
+		// Real RPC resumes in the cursor's own ledger, past the cursor. The
+		// fake's end-of-window cursors carry the maximum ordinal, so starting
+		// at the next ledger is equivalent for every page it returns.
+		from = cursor.Ledger + 1
+	} else {
+		c.starts = append(c.starts, from)
+		if from < c.floor || from > c.latest {
+			return protocol.GetEventsResponse{}, rpcErr(rangeErrorCode)
+		}
 	}
-	c.starts = append(c.starts, req.StartLedger)
-	if req.StartLedger < c.floor || req.StartLedger > c.latest {
-		return protocol.GetEventsResponse{}, rpcErr(rangeErrorCode)
+	to := c.latest
+	if c.scanCap > 0 && from+c.scanCap-1 < to {
+		to = from + c.scanCap - 1
 	}
 	var page []protocol.EventInfo
 	for _, e := range c.events {
-		if uint32(e.Ledger) >= req.StartLedger {
+		if l := uint32(e.Ledger); l >= from && l <= to {
 			page = append(page, e)
 		}
 	}
-	return protocol.GetEventsResponse{Events: page, Cursor: endOfWindowCursor(c.latest)}, nil
+	return protocol.GetEventsResponse{Events: page, Cursor: endOfWindowCursor(to), LatestLedger: c.latest}, nil
 }
 
 // The floor moves between the getHealth that classifies a low-side -32600 and
@@ -428,15 +445,15 @@ func TestRangeErrorLowSideSurvivesAFloorThatMovesDuringRecovery(t *testing.T) {
 	if n := len(storedEvents(t, handle)); n != 1 {
 		t.Fatalf("stored %d events, want 1", n)
 	}
-	if got := progress(t, handle); got != 5519800 {
-		t.Errorf("progress = %d, want 5519800", got)
+	if got := progress(t, handle); got != 5640679 {
+		t.Errorf("progress = %d, want 5640679, the tip the drain scanned to", got)
 	}
 }
 
-// A recovery that finds nothing still records where it resumed. The skipped
-// ledgers are gone from RPC, so without this a quiet contract stays at its old
-// cursor and repeats the whole recovery every tick (ADR-048).
-func TestRangeErrorLowSideRecordsTheResumePointWhenTheWindowIsEmpty(t *testing.T) {
+// A recovery whose drain finds nothing still records progress, so a quiet
+// contract does not stay at its old cursor and repeat the whole recovery every
+// tick (ADR-048). The drain scanned to the tip, so progress lands there.
+func TestRangeErrorLowSideRecordsProgressWhenTheWindowIsEmpty(t *testing.T) {
 	handle := migrated(t)
 	caller := &slidingFloorCaller{floor: 5519719, latest: 5640679, drift: 1}
 	p := newPoller(t, caller, handle)
@@ -445,8 +462,8 @@ func TestRangeErrorLowSideRecordsTheResumePointWhenTheWindowIsEmpty(t *testing.T
 		t.Fatalf("tickOnce: %v", err)
 	}
 
-	if got := progress(t, handle); got != 5519728 {
-		t.Errorf("progress = %d, want 5519728, the ledger before the resume point", got)
+	if got := progress(t, handle); got != 5640679 {
+		t.Errorf("progress = %d, want 5640679, the tip the drain scanned to", got)
 	}
 	if n := len(storedEvents(t, handle)); n != 0 {
 		t.Errorf("stored %d events, want 0", n)
@@ -467,8 +484,59 @@ func TestRangeErrorLowSideClampsTheMarginToTheTip(t *testing.T) {
 	if got := caller.starts[len(caller.starts)-1]; got != 105 {
 		t.Errorf("resume startLedger = %d, want 105 (clamped to the tip)", got)
 	}
-	if got := progress(t, handle); got != 104 {
-		t.Errorf("progress = %d, want 104", got)
+	if got := progress(t, handle); got != 105 {
+		t.Errorf("progress = %d, want 105, the tip", got)
+	}
+}
+
+// Testnet scans at most 10000 ledgers per getEvents call and answers a slice
+// with no matches with an empty page whose cursor sits at the slice end, not the
+// tip. The drain keeps paging until a page that is not full reaches the
+// response's latestLedger, then records the tip it scanned to (ADR-049).
+func TestDrainPagesPastEmptyScanSlicesToTheTip(t *testing.T) {
+	handle := migrated(t)
+	if err := store.NewContracts(handle).SetProgress(context.Background(), showcase, 5520003); err != nil {
+		t.Fatalf("SetProgress: %v", err)
+	}
+	caller := &slidingFloorCaller{
+		floor: 5519719, latest: 5640969, scanCap: 10000,
+		events: []protocol.EventInfo{
+			event(t, 5640900, 0, "transfer_topic0", "deposit_data", true),
+			event(t, 5640905, 0, "transfer_topic0", "deposit_data", true),
+		},
+	}
+	p := newPoller(t, caller, handle)
+
+	if err := p.tickOnce(context.Background(), showcase); err != nil {
+		t.Fatalf("tickOnce: %v", err)
+	}
+
+	if n := len(storedEvents(t, handle)); n != 2 {
+		t.Fatalf("stored %d events, want the 2 near the tip", n)
+	}
+	if got := progress(t, handle); got != 5640969 {
+		t.Errorf("progress = %d, want 5640969, the tip the drain scanned to", got)
+	}
+	if caller.calls != 13 {
+		t.Errorf("getEvents called %d times, want 13 slices of 10000 ledgers", caller.calls)
+	}
+}
+
+// A cursor that does not move would page forever. The drain refuses it rather
+// than trusting RPC to make progress (ADR-049).
+func TestDrainRefusesACursorThatDoesNotAdvance(t *testing.T) {
+	handle := migrated(t)
+	if err := store.NewContracts(handle).SetProgress(context.Background(), showcase, 5520003); err != nil {
+		t.Fatalf("SetProgress: %v", err)
+	}
+	caller := &slidingFloorCaller{floor: 5519719, latest: 5640969, scanCap: 10000, stuckCursor: true}
+	p := newPoller(t, caller, handle)
+
+	if err := p.tickOnce(context.Background(), showcase); err == nil {
+		t.Fatal("tickOnce returned nil for a cursor that never advances, want an error")
+	}
+	if got := progress(t, handle); got != 5520003 {
+		t.Errorf("progress = %d, want 5520003 held", got)
 	}
 }
 
@@ -562,8 +630,10 @@ func TestNonSymbolFirstTopicYieldsANamelessEvent(t *testing.T) {
 	}
 }
 
-// A tick that finds nothing stores nothing and leaves progress untouched.
-func TestEmptyPageStoresNothingAndHoldsProgress(t *testing.T) {
+// A tick that finds nothing stores nothing, but progress moves to the tip it
+// scanned, so a quiet contract settles on ADR-036's high side instead of
+// re-scanning the same ledgers every tick (ADR-049).
+func TestEmptyDrainStoresNothingAndAdvancesToTheScannedTip(t *testing.T) {
 	handle := migrated(t)
 	if err := store.NewContracts(handle).SetProgress(context.Background(), showcase, 4430000); err != nil {
 		t.Fatalf("SetProgress: %v", err)
@@ -581,8 +651,8 @@ func TestEmptyPageStoresNothingAndHoldsProgress(t *testing.T) {
 	if len(storedEvents(t, handle)) != 0 {
 		t.Errorf("an empty page stored events")
 	}
-	if p := progress(t, handle); p != 4430000 {
-		t.Errorf("progress = %d, want 4430000 held", p)
+	if p := progress(t, handle); p != 4430001 {
+		t.Errorf("progress = %d, want 4430001, the scanned tip", p)
 	}
 }
 
@@ -598,14 +668,16 @@ func TestDrainPagesUntilAShortPage(t *testing.T) {
 	caller := &mockCaller{
 		eventsQueue: []eventsReply{
 			{resp: protocol.GetEventsResponse{
-				Events: firstPage,
-				Cursor: protocol.Cursor{Ledger: 4430000, Event: 99}.String(),
+				Events:       firstPage,
+				Cursor:       protocol.Cursor{Ledger: 4430000, Event: 99}.String(),
+				LatestLedger: 4430001,
 			}},
 			{resp: protocol.GetEventsResponse{
 				Events: []protocol.EventInfo{
 					event(t, 4430001, 0, "transfer_topic0", "deposit_data", true),
 				},
-				Cursor: endOfWindowCursor(4430001),
+				Cursor:       endOfWindowCursor(4430001),
+				LatestLedger: 4430001,
 			}},
 		},
 	}
@@ -622,6 +694,42 @@ func TestDrainPagesUntilAShortPage(t *testing.T) {
 	}
 	if p := progress(t, handle); p != 4430001 {
 		t.Errorf("progress = %d, want 4430001 (the highest ledger seen)", p)
+	}
+}
+
+// A full page whose last event sits at latestLedger does not end the drain:
+// the same ledger can hold more events, and only the end-of-window page that
+// follows may stop it (ADR-049).
+func TestFullPageAtTheTipKeepsPaging(t *testing.T) {
+	handle := migrated(t)
+	firstPage := make([]protocol.EventInfo, 100)
+	for i := range firstPage {
+		firstPage[i] = event(t, 4430001, uint32(i), "transfer_topic0", "deposit_data", true)
+	}
+	caller := &mockCaller{
+		eventsQueue: []eventsReply{
+			{resp: protocol.GetEventsResponse{
+				Events:       firstPage,
+				Cursor:       protocol.Cursor{Ledger: 4430001, Event: 99}.String(),
+				LatestLedger: 4430001,
+			}},
+			{resp: protocol.GetEventsResponse{
+				Events:       []protocol.EventInfo{event(t, 4430001, 100, "transfer_topic0", "deposit_data", true)},
+				Cursor:       endOfWindowCursor(4430001),
+				LatestLedger: 4430001,
+			}},
+		},
+	}
+	p := newPoller(t, caller, handle)
+
+	if err := p.tickOnce(context.Background(), showcase); err != nil {
+		t.Fatalf("tickOnce: %v", err)
+	}
+	if got := len(storedEvents(t, handle)); got != 101 {
+		t.Errorf("stored %d events, want 101; the rest of the tip ledger must not be skipped", got)
+	}
+	if p := progress(t, handle); p != 4430001 {
+		t.Errorf("progress = %d, want 4430001", p)
 	}
 }
 
