@@ -35,6 +35,13 @@ const (
 	backoffexponent = 2
 )
 
+// floorSafetyMargin is how far above the reported retention floor a low-side
+// recovery resumes. RPC prunes a ledger per close, so the floor getHealth
+// reports has often moved by the time getEvents arrives; ten ledgers (about 50s
+// on testnet) absorbs that round trip and costs only those ledgers' backfill
+// (ADR-048).
+const floorSafetyMargin = 10
+
 // txBeginner is the slice of *sql.DB the poller needs to open the transaction
 // that commits a batch and its cursor together. Defined here, where it is used,
 // so a test can supply its own without a real database. *sql.DB satisfies it.
@@ -284,23 +291,25 @@ func (p *Poller) handleRangeError(
 
 	case startLedger < health.OldestLedger:
 		// Low side: the retention floor moved past our cursor. The ledgers
-		// between the old cursor and the new floor are gone from RPC; record
-		// the gap and resume from the floor (ADR-028 finding #4).
+		// below the floor are gone from RPC; record the gap and resume a
+		// safety margin above it, since the floor keeps moving while this
+		// recovery runs (ADR-028 finding #4, ADR-048). Clamped to the tip so a
+		// narrow window does not overshoot into a high-side rejection.
+		resumeAt := min(health.OldestLedger+floorSafetyMargin, health.LatestLedger)
 		p.logger.Warn("poll_skipped_ledgers",
 			"component", "rpc",
 			"contract_id", contractID,
 			"skipped_from", startLedger,
-			"skipped_to", health.OldestLedger-1,
-			"resumed_at", health.OldestLedger)
+			"skipped_to", resumeAt-1,
+			"resumed_at", resumeAt)
 
-		events, highestLedger, err := p.drain(ctx, contractID, health.OldestLedger)
+		events, highestLedger, err := p.drain(ctx, contractID, resumeAt)
 		if err != nil {
 			return fmt.Errorf("rpc: draining %s from the new floor: %w", contractID, err)
 		}
-		if len(events) == 0 {
-			return nil
-		}
-		return p.commit(ctx, contractID, events, highestLedger)
+		// Commit even an empty drain: the skipped ledgers are unrecoverable,
+		// so progress moves past them rather than repeating this every tick.
+		return p.commit(ctx, contractID, events, max(highestLedger, int64(resumeAt)-1))
 
 	default:
 		// startLedger is inside [oldestLedger, latestLedger], yet the call was

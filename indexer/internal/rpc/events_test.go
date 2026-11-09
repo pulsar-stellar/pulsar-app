@@ -302,12 +302,13 @@ func TestRangeErrorLowSideResumesFromTheNewFloor(t *testing.T) {
 		eventsQueue: []eventsReply{
 			// startLedger 4000001 is below the floor: rejected.
 			{err: rpcErr(rangeErrorCode)},
-			// After re-reading health, the poller retries from oldestLedger.
+			// After re-reading health, the poller retries a safety margin
+			// above oldestLedger (ADR-048).
 			{resp: protocol.GetEventsResponse{
 				Events: []protocol.EventInfo{
-					event(t, 4465754, 0, "transfer_topic0", "deposit_data", true),
+					event(t, 4465764, 0, "transfer_topic0", "deposit_data", true),
 				},
-				Cursor: endOfWindowCursor(4465754),
+				Cursor: endOfWindowCursor(4465764),
 			}},
 		},
 		health: protocol.GetHealthResponse{OldestLedger: 4465754, LatestLedger: 4586713},
@@ -321,18 +322,18 @@ func TestRangeErrorLowSideResumesFromTheNewFloor(t *testing.T) {
 	if caller.healthCalls != 1 {
 		t.Errorf("getHealth called %d times, want 1", caller.healthCalls)
 	}
-	if got := caller.lastStartLedger(); got != 4465754 {
-		t.Errorf("retry startLedger = %d, want 4465754 (the new floor)", got)
+	if got := caller.lastStartLedger(); got != 4465764 {
+		t.Errorf("retry startLedger = %d, want 4465764 (the new floor plus the margin)", got)
 	}
 	events := storedEvents(t, handle)
 	if len(events) != 1 {
 		t.Fatalf("stored %d events, want 1 from the new floor", len(events))
 	}
-	if events[0].Ledger != 4465754 {
-		t.Errorf("stored ledger = %d, want 4465754", events[0].Ledger)
+	if events[0].Ledger != 4465764 {
+		t.Errorf("stored ledger = %d, want 4465764", events[0].Ledger)
 	}
-	if p := progress(t, handle); p != 4465754 {
-		t.Errorf("progress = %d, want 4465754", p)
+	if p := progress(t, handle); p != 4465764 {
+		t.Errorf("progress = %d, want 4465764", p)
 	}
 }
 
@@ -369,6 +370,105 @@ func TestRangeErrorHighSideHoldsPositionWhenCaughtUp(t *testing.T) {
 	}
 	if p := progress(t, handle); p != 4586713 {
 		t.Errorf("progress = %d, want 4586713 held", p)
+	}
+}
+
+// slidingFloorCaller is an RPC whose retention floor advances by drift after
+// every getHealth, the way public testnet prunes a ledger per close. getEvents
+// rejects a startLedger outside the live window with -32600, as RPC does.
+type slidingFloorCaller struct {
+	floor, latest, drift uint32
+	events               []protocol.EventInfo
+	starts               []uint32
+}
+
+func (c *slidingFloorCaller) GetHealth(_ context.Context) (protocol.GetHealthResponse, error) {
+	resp := protocol.GetHealthResponse{OldestLedger: c.floor, LatestLedger: c.latest}
+	c.floor += c.drift
+	return resp, nil
+}
+
+func (c *slidingFloorCaller) GetEvents(_ context.Context, req protocol.GetEventsRequest) (protocol.GetEventsResponse, error) {
+	if req.StartLedger == 0 {
+		// A cursor-paged follow-up: everything was served on the first page.
+		return protocol.GetEventsResponse{Cursor: endOfWindowCursor(c.latest)}, nil
+	}
+	c.starts = append(c.starts, req.StartLedger)
+	if req.StartLedger < c.floor || req.StartLedger > c.latest {
+		return protocol.GetEventsResponse{}, rpcErr(rangeErrorCode)
+	}
+	var page []protocol.EventInfo
+	for _, e := range c.events {
+		if uint32(e.Ledger) >= req.StartLedger {
+			page = append(page, e)
+		}
+	}
+	return protocol.GetEventsResponse{Events: page, Cursor: endOfWindowCursor(c.latest)}, nil
+}
+
+// The floor moves between the getHealth that classifies a low-side -32600 and
+// the getEvents that resumes, as observed live on testnet. Resuming at exactly
+// the old floor is rejected every tick, so the recovery resumes a safety margin
+// above it, bounds still read from getHealth rather than error text (ADR-048).
+func TestRangeErrorLowSideSurvivesAFloorThatMovesDuringRecovery(t *testing.T) {
+	handle := migrated(t)
+	caller := &slidingFloorCaller{
+		floor: 5519719, latest: 5640679, drift: 1,
+		events: []protocol.EventInfo{event(t, 5519800, 0, "transfer_topic0", "deposit_data", true)},
+	}
+	p := newPoller(t, caller, handle)
+
+	if err := p.tickOnce(context.Background(), showcase); err != nil {
+		t.Fatalf("tickOnce: %v", err)
+	}
+
+	if got := caller.starts[len(caller.starts)-1]; got != 5519729 {
+		t.Errorf("resume startLedger = %d, want 5519729 (floor 5519719 plus the margin)", got)
+	}
+	if n := len(storedEvents(t, handle)); n != 1 {
+		t.Fatalf("stored %d events, want 1", n)
+	}
+	if got := progress(t, handle); got != 5519800 {
+		t.Errorf("progress = %d, want 5519800", got)
+	}
+}
+
+// A recovery that finds nothing still records where it resumed. The skipped
+// ledgers are gone from RPC, so without this a quiet contract stays at its old
+// cursor and repeats the whole recovery every tick (ADR-048).
+func TestRangeErrorLowSideRecordsTheResumePointWhenTheWindowIsEmpty(t *testing.T) {
+	handle := migrated(t)
+	caller := &slidingFloorCaller{floor: 5519719, latest: 5640679, drift: 1}
+	p := newPoller(t, caller, handle)
+
+	if err := p.tickOnce(context.Background(), showcase); err != nil {
+		t.Fatalf("tickOnce: %v", err)
+	}
+
+	if got := progress(t, handle); got != 5519728 {
+		t.Errorf("progress = %d, want 5519728, the ledger before the resume point", got)
+	}
+	if n := len(storedEvents(t, handle)); n != 0 {
+		t.Errorf("stored %d events, want 0", n)
+	}
+}
+
+// When the window is narrower than the margin, the resume point is clamped to
+// the tip rather than overshooting into a high-side rejection.
+func TestRangeErrorLowSideClampsTheMarginToTheTip(t *testing.T) {
+	handle := migrated(t)
+	caller := &slidingFloorCaller{floor: 100, latest: 105}
+	p := newPoller(t, caller, handle)
+
+	if err := p.tickOnce(context.Background(), showcase); err != nil {
+		t.Fatalf("tickOnce: %v", err)
+	}
+
+	if got := caller.starts[len(caller.starts)-1]; got != 105 {
+		t.Errorf("resume startLedger = %d, want 105 (clamped to the tip)", got)
+	}
+	if got := progress(t, handle); got != 104 {
+		t.Errorf("progress = %d, want 104", got)
 	}
 }
 

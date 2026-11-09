@@ -1873,8 +1873,45 @@ Several recorded decisions constrain the shape and are honoured below rather tha
 - **Three ghcr.io behaviours to handle at first publish, recorded so they are not discovered live.** A new package defaults to private, and GitHub's own documentation conflicts over whether an Actions push from a public repository inherits repository visibility, so the first publish verifies an anonymous pull from a context holding no registry credentials rather than assuming. Public-to-private is irreversible. A public version past five thousand downloads cannot be deleted without GitHub support, which is the other reason released tags are immutable. Neither registry prunes anything on its own, so untagged versions need a scheduled cleanup against the packages REST API.
 - **A pulsar-docs companion is owed**, joining the obligations already recorded by ADR-043, ADR-044, and ADR-046. Running the indexer from a container image is operator-facing public behaviour, so the deployment path belongs in the sibling repository once the artifacts exist (ADR-009).
 
+## ADR-048: Low-side recovery resumes a safety margin above the retention floor and records the resume point (amends ADR-036)
+Date: 2026-11-09
+Status: accepted
 
+### Context
 
+ADR-036 kept ADR-028 finding #4's low-side rule unchanged: on a `-32600` with `startLedger` below the freshly read `oldestLedger`, resume from `oldestLedger`. Running the indexer container against public testnet on 2026-11-09 showed that rule fails every time on a live node.
 
+Public testnet prunes about one ledger per close. Between the `getHealth` that reported the floor and the `getEvents` that resumed from it, the floor had already moved:
 
+```
+WARN  poll_skipped_ledgers  skipped_from=1 skipped_to=5519718 resumed_at=5519719
+ERROR poll_tick_failed  ... [-32600] startLedger must be within the ledger range: 5519720 - 5640679
+```
+
+The resume was rejected, the tick failed, and the next tick repeated the same sequence a few ledgers later. A freshly registered contract (cursor 1) never got past this, so the indexer stored nothing against a live public RPC.
+
+The same run exposed a second defect on that path. A recovery whose drain found no events returned without writing progress, so a contract with no events in the window stayed at its old cursor and ran the whole recovery again on every tick. The showcase contract had no events in testnet's window at the time, so this was not a rare case: it is what any quiet contract does.
+
+### Decision
+
+**Resume at `min(oldestLedger + 10, latestLedger)`.** The margin, `floorSafetyMargin` in `internal/rpc/events.go`, is ten ledgers, about 50 seconds of testnet closes, which absorbs the `getHealth` to `getEvents` round trip with room to spare. Backfill stays near the floor: the cost is those ten ledgers, which are about to be pruned anyway. The clamp to `latestLedger` keeps a narrow window, as on a local RPC with short retention, from overshooting into a high-side rejection.
+
+**Bounds still come from `getHealth`, never from the error text.** ADR-036's discriminator is unchanged. The margin is added to the numerically read floor; the `-32600` message, which happens to quote the live range, is still read by no code path.
+
+**Commit the resume point even when the drain is empty.** Progress becomes `max(highestLedger, resumeAt - 1)` in the same transaction as any events, through the existing `commit` path. The ledgers below `resumeAt` are unrecoverable from RPC, and `poll_skipped_ledgers` logs them as the gap (`skipped_to` is now `resumeAt - 1`), so moving the cursor past them records what happened rather than claiming data that was never fetched.
+
+### Alternatives considered
+
+**Retry at the new floor on a second `-32600`.** Rejected. It turns one race into a loop of `getHealth` and `getEvents` pairs that each can lose the same race, and it needs a retry cap to be safe. A fixed margin wins the race in one call.
+
+**Parse the live range out of the error message.** Rejected for the reason ADR-034 and ADR-036 give: the wording is not a contract.
+
+**A larger margin, or one derived from the measured round trip.** Rejected for now. Ten ledgers covers the observed drift (one to two ledgers) several times over. If an operator's RPC is slow enough to lose ten ledgers in one round trip, the tick fails, backs off, and the next tick resumes from a fresh floor, which is the ADR-036 failure path working as designed.
+
+### Consequences
+
+- This amends ADR-036's low-side rule and nothing else. The high side still holds position without writing progress, so ADR-036's consequence that no progress is written past unfetched ledgers still holds there. On the low side it no longer holds: progress moves past the logged gap.
+- A recovery skips up to ten ledgers that were still retained when `getHealth` answered. Their events, if any, are lost to this indexer. That is accepted because the alternative was losing everything.
+- A quiet contract still re-enters the low side once the floor passes its recorded cursor, roughly every ten ticks on testnet, since an empty steady-state drain does not advance progress. Each re-entry is now one cheap, successful recovery rather than a failure. Advancing progress on empty drains from the response's `latestLedger` would remove it, and is a separate change.
+- Covered by `TestRangeErrorLowSideSurvivesAFloorThatMovesDuringRecovery`, which uses a fake RPC whose floor advances after every `getHealth`, plus tests for the empty-window commit and the clamp.
 
