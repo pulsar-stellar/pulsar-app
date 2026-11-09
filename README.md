@@ -90,7 +90,7 @@ file would apply cleanly on both and silently corrupt one. See ADR-029.
 
 ## Status
 
-Sprint 6 complete, deployment next. The SDK is released. The indexer runs as a
+Sprint 6 complete, deployment underway. The SDK is released. The indexer runs as a
 daemon, stores events, and serves its full HTTP API (REST and GraphQL) alongside
 the poller, with the write routes gated by authentication and rate limiting. The
 web explorer is built and runs locally. Nothing is deployed yet.
@@ -98,14 +98,14 @@ web explorer is built and runs locally. Nothing is deployed yet.
 | Artifact | State |
 |---|---|
 | Workspace scaffold | complete |
-| `@pulsar-stellar/sdk` | released, `0.1.0` on npm, tag `v0.1.0-app` |
+| `@pulsar-stellar/sdk` | released, `0.2.0` on npm, tag `sdk-v0.2.0` (`0.1.0` deprecated: its live reads fail on RPC v30, ADR-050) |
 | Go indexer, ingestion | running: polls RPC, decodes, stores events |
 | Go indexer, REST API | served: health, contracts, and events routes |
 | Go indexer, GraphQL API | served: read-only `POST /graphql` (ADR-043) |
 | Go indexer, write gate | live: bearer auth plus rate limiting on writes (ADR-044) |
 | Postgres schema | verified: migrations applied to a real Postgres, in CI |
 | Web explorer | built: lookup, contract detail, event list, event detail |
-| Deployment | not started: no image, no hosted instance (ADR-047 decides the shape) |
+| Deployment | in progress: indexer Dockerfile and local compose stack merged (ADR-047); no published image, no hosted instance |
 
 The daemon loads its configuration, opens the database, applies migrations,
 registers the bootstrap contracts, runs one polling loop per contract, and serves
@@ -140,11 +140,11 @@ product-level milestones.
 
 | Sprint | Scope | State |
 |---|---|---|
-| 4 | Monorepo scaffold and TypeScript SDK | done, `@pulsar-stellar/sdk@0.1.0` |
-| 5 | Go indexer: ingestion, REST, GraphQL, write gate | in progress, Phase F closing |
-| 6 | Next.js explorer | next |
+| 4 | Monorepo scaffold and TypeScript SDK | done, `@pulsar-stellar/sdk@0.1.0`, now `0.2.0` |
+| 5 | Go indexer: ingestion, REST, GraphQL, write gate | done |
+| 6 | Next.js explorer | done |
 | 7 | GitBook documentation | planned |
-| 8 | Deploy, publish, `v0.1.0-app` product milestone | planned |
+| 8 | Deploy, publish, `v0.1.0-app` product milestone | in progress |
 
 Beyond v0.1: webhooks and SSE for push delivery instead of polling, cross-contract
 search, and historical replay from archive nodes past the RPC retention window.
@@ -153,7 +153,7 @@ Each is deferred by choice with a trigger recorded in the roadmap, not dropped.
 ## Related resources
 
 - npm package: [`@pulsar-stellar/sdk`](https://www.npmjs.com/package/@pulsar-stellar/sdk)
-- Release tag: [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
+- Release tags: [`sdk-v0.2.0`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/sdk-v0.2.0), [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
 - Rust contract layer: [`pulsar-stellar/pulsar-core`](https://github.com/pulsar-stellar/pulsar-core)
 - Indexer detail: [`indexer/README.md`](indexer/README.md)
 - Decision log (ADRs): [`.agent/decisions.md`](.agent/decisions.md)
