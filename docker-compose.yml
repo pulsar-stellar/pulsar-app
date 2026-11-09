@@ -1,0 +1,70 @@
+# Local stack: the indexer against Postgres, the production engine (ADR-047).
+#
+# This is one way to run the indexer, not the way. The documented quickstart in
+# indexer/README.md stays SQLite-first, because zero setup is a product promise
+# (ADR-003, ADR-029).
+#
+#   docker compose --env-file .env.local up --build
+#
+# PULSAR_INDEXER_ADMIN_TOKEN has no default by design (ADR-044). Compose reads
+# it from the shell or the --env-file above and refuses to start without it.
+
+services:
+  postgres:
+    # 16.15, pinned by digest so a re-pull cannot change what runs.
+    image: postgres:16@sha256:f9a7b9ebf6f56201f949db745e47bc423c0f0f8294bafe991cc10bf74b029657
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    environment:
+      # Local-only credentials. The port is not published, so this database is
+      # reachable only from the compose network.
+      POSTGRES_USER: pulsar
+      POSTGRES_PASSWORD: pulsar
+      POSTGRES_DB: pulsar
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsar -d pulsar"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  indexer:
+    build: ./indexer
+    image: pulsar-indexer:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PULSAR_INDEXER_DB_DRIVER: postgres
+      PULSAR_INDEXER_DB_URL: postgres://pulsar:pulsar@postgres:5432/pulsar?sslmode=disable
+      # The container Postgres has no certificate, which is the case ADR-031's
+      # escape hatch exists for. Local only: a deployed DSN uses sslmode=require.
+      PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS: "true"
+      PULSAR_INDEXER_DB_POOL_MAX: "10"
+      PULSAR_INDEXER_DB_POOL_MIN: "2"
+      PULSAR_INDEXER_RPC_URL: ${PULSAR_INDEXER_RPC_URL:-https://soroban-testnet.stellar.org}
+      PULSAR_INDEXER_NETWORK: ${PULSAR_INDEXER_NETWORK:-testnet}
+      PULSAR_INDEXER_BOOTSTRAP_CONTRACTS: ${PULSAR_INDEXER_BOOTSTRAP_CONTRACTS:-CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L}
+      PULSAR_INDEXER_LOG_LEVEL: ${PULSAR_INDEXER_LOG_LEVEL:-info}
+      PULSAR_INDEXER_ADMIN_TOKEN: ${PULSAR_INDEXER_ADMIN_TOKEN:?set PULSAR_INDEXER_ADMIN_TOKEN (16+ chars, e.g. openssl rand -hex 32)}
+      # Keeps the Go heap under the container limit below, so the GC works
+      # harder before the kernel OOM-kills the process.
+      GOMEMLIMIT: 200MiB
+    # Loopback only: the write routes carry a bearer token over plain HTTP here.
+    ports:
+      - "127.0.0.1:8080:8080"
+    # The Postgres path writes nothing to the filesystem, so the root can be
+    # read-only and the process needs no capabilities.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+    # Room for the daemon's graceful dual shutdown (ADR-044) before SIGKILL.
+    stop_grace_period: 30s
+    # No healthcheck: the scratch image has no shell or HTTP client to run one.
+    # Probe GET /health from the host instead.
+
+volumes:
+  pgdata:

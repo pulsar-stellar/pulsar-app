@@ -94,6 +94,22 @@ query the engines spell differently is written correctly for each (ADR-041).
   on it unless `PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS=true` is set for local use
   (ADR-031).
 
+To try the Postgres path locally, the root `docker-compose.yml` builds the image
+and runs it against a Postgres 16 container (ADR-047). Copy `.env.example` to `.env.local` and set `PULSAR_INDEXER_ADMIN_TOKEN` there
+(`openssl rand -hex 32`); compose refuses to start without one.
+
+```sh
+docker compose --env-file .env.local up --build
+curl -s http://127.0.0.1:8080/health
+docker compose down -v   # -v also drops the database volume
+```
+
+The API binds to loopback only. The container runs as UID 65532 with a read-only
+root filesystem and no capabilities, and the image has no shell, so compose has no
+container healthcheck: probe `/health` from the host. The compose file sets
+`PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS=true` because the container database has no
+certificate. That setting is for this local stack only.
+
 ## HTTP surface
 
 Every JSON response, success or failure, is the same envelope (ADR-017): a
