@@ -1,12 +1,15 @@
 package rpc
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -962,5 +965,44 @@ func TestNameFromEmptyTopicsIsEmpty(t *testing.T) {
 	}
 	if got := nameFromTopics([]decoder.DecodedValue{}); got != "" {
 		t.Errorf("nameFromTopics([]) = %q, want empty", got)
+	}
+}
+
+// A caught-up contract commits an empty drain on most ticks, since a ledger
+// usually closes between them. That is routine, so it logs at debug; a commit
+// that stored events stays at info.
+func TestEventsIndexedLogsEmptyCommitsAtDebug(t *testing.T) {
+	cases := []struct {
+		name   string
+		events []protocol.EventInfo
+		want   string
+	}{
+		{"empty", nil, "level=DEBUG"},
+		{"with events", []protocol.EventInfo{event(t, 4430001, 0, "transfer_topic0", "deposit_data", true)}, "level=INFO"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			handle := migrated(t)
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			caller := &mockCaller{eventsQueue: []eventsReply{{resp: protocol.GetEventsResponse{
+				Events: tc.events, Cursor: endOfWindowCursor(4430001), LatestLedger: 4430001,
+			}}}}
+			p := NewPoller(caller, decoder.New(), handle, store.NewContracts(handle),
+				store.DialectSQLite, 10*time.Millisecond, 100, logger)
+
+			if err := p.tickOnce(context.Background(), showcase); err != nil {
+				t.Fatalf("tickOnce: %v", err)
+			}
+			for _, line := range strings.Split(buf.String(), "\n") {
+				if strings.Contains(line, "msg=events_indexed") {
+					if !strings.Contains(line, tc.want) {
+						t.Errorf("events_indexed logged as %q, want %s", line, tc.want)
+					}
+					return
+				}
+			}
+			t.Fatal("no events_indexed line logged")
+		})
 	}
 }

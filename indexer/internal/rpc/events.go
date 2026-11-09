@@ -356,7 +356,12 @@ func (p *Poller) commit(
 		return fmt.Errorf("rpc: committing %d events for %s: %w", len(events), contractID, err)
 	}
 
-	p.logger.Info("events_indexed",
+	// An empty commit is a caught-up contract's routine tick (ADR-049).
+	level := slog.LevelInfo
+	if len(events) == 0 {
+		level = slog.LevelDebug
+	}
+	p.logger.Log(ctx, level, "events_indexed",
 		"component", "rpc",
 		"contract_id", contractID,
 		"fetched", len(events),
