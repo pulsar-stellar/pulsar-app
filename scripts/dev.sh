@@ -14,6 +14,12 @@ cd "$(dirname "$0")/.."
 say() { printf 'dev: %s\n' "$1"; }
 fail() { printf 'dev: %s\n' "$1" >&2; exit 1; }
 
+# wait -n with PIDs, used below to return on the first child to exit, arrived in
+# bash 5.1. macOS ships 3.2, so install a newer bash (e.g. brew install bash).
+if (( BASH_VERSINFO[0] < 5 || (BASH_VERSINFO[0] == 5 && BASH_VERSINFO[1] < 1) )); then
+  fail "bash 5.1 or later is required (this is $BASH_VERSION)"
+fi
+
 local_env=".env.local"
 [ -f "$local_env" ] || fail "$local_env not found; run ./scripts/setup.sh first"
 
@@ -29,12 +35,21 @@ set +o allexport
 indexer_pid=""
 web_pid=""
 
-# Stop whichever child is still running. Each kill is tolerated failing, because
-# the usual reason to be here is that one of them has already exited.
+# Job control puts each child in its own process group, led by the PID $! gives
+# back. Signalling the group rather than the PID is what reaches the processes
+# the children spawn: go run executes the compiled indexer as its own child, and
+# pnpm runs next dev the same way, so killing only the two PIDs would orphan
+# them, leaving the indexer holding :8080. Groups also keep the signal off
+# whatever launched this script, which kill 0 would hit.
+set -m
+
+# Stop both process groups. Each kill is tolerated failing, because the usual
+# reason to be here is that one child has already exited, and its group may be
+# empty or gone.
 stop_children() {
   trap - INT TERM EXIT
-  [ -n "$indexer_pid" ] && kill "$indexer_pid" 2>/dev/null || true
-  [ -n "$web_pid" ] && kill "$web_pid" 2>/dev/null || true
+  [ -n "$indexer_pid" ] && kill -TERM -- "-$indexer_pid" 2>/dev/null || true
+  [ -n "$web_pid" ] && kill -TERM -- "-$web_pid" 2>/dev/null || true
   wait 2>/dev/null || true
 }
 trap 'stop_children' INT TERM EXIT

@@ -11,9 +11,9 @@
 #
 # What is covered: the guard clauses, setup.sh's file handling (which is the one
 # piece with real logic), and seed-showcase.sh's reading of HTTP status codes.
-# What is not: dev.sh's process orchestration past its guards, and the actual
-# build commands, both of which need the real toolchain and are exercised by
-# running them.
+# dev.sh's teardown is covered with sleeping stubs that spawn grandchildren.
+# What is not: the actual build commands, which need the real toolchain and are
+# exercised by running them.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -128,6 +128,35 @@ run "dev.sh fails without .env.local" dev.sh 1
 reset dev.sh
 printf 'PULSAR_INDEXER_ADMIN_TOKEN=\n' > "$sandbox/.env.local"
 run "dev.sh fails on an empty admin token" dev.sh 1
+
+# When one child exits, the other must stop with everything it spawned. The go
+# stub mirrors go run, which compiles the indexer and runs it as a grandchild,
+# so killing the stub's own PID would leave that grandchild holding :8080. The
+# pnpm stub starts a grandchild of its own and exits, the way next dev would
+# leave a server behind. Both grandchildren record their PIDs and must be gone
+# once dev.sh returns.
+reset dev.sh
+mkdir -p "$sandbox/indexer" "$sandbox/pids"
+printf 'PULSAR_INDEXER_ADMIN_TOKEN=0123456789abcdef0123456789abcdef\n' > "$sandbox/.env.local"
+link_tools "$sandbox/bin" sleep
+stub "$sandbox/bin" go 'sleep 300 >/dev/null 2>&1 & echo $! > "$DEV_TEST_PIDS/indexer"; wait'
+stub "$sandbox/bin" pnpm 'sleep 300 >/dev/null 2>&1 & echo $! > "$DEV_TEST_PIDS/web"; sleep 1; exit 0'
+DEV_TEST_PIDS="$sandbox/pids" run "dev.sh exits when the explorer exits" dev.sh 0
+cases=$((cases + 1))
+leftover=""
+for name in indexer web; do
+  pid="$(cat "$sandbox/pids/$name" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    leftover="$leftover $name($pid)"
+    kill "$pid" 2>/dev/null || true
+  fi
+done
+if [ -z "$leftover" ]; then
+  printf 'ok   dev.sh leaves no grandchild running\n'
+else
+  printf 'FAIL dev.sh left grandchildren running:%s\n' "$leftover" >&2
+  failures=$((failures + 1))
+fi
 
 # --- seed-showcase.sh ---
 
