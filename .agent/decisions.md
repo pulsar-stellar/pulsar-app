@@ -1997,3 +1997,44 @@ The documents do not state the conclusion in one sentence, so it was checked on 
 - `@pulsar-stellar/sdk@0.1.0` stays broken for live reads until a release ships this fix. The release is 0.2.0, since `main` also carries the unpublished write-auth feature (ADR-045), and 0.1.0 is deprecated on npm pointing at it.
 - Events already stored as `false` by a pre-fix indexer are wrong. No deployment exists, so there is nothing to backfill. A future deployment would need one only if it ran a pre-fix build against RPC v30.
 - Tests: an RPC fake serving the member absent, `true`, and `false` checks all three outcomes for the indexer, and the SDK test feeds `fetchLiveEvents` a live event with the member removed. Both failed before the fix with the live symptom.
+
+## ADR-051: The decoder replaces invalid UTF-8 per maximal subpart, matching the Rust decoder and the SDK (amends ADR-023)
+Date: 2026-11-09
+Status: accepted
+
+### Context
+
+ADR-023 fixes the `DecodedValue` taxonomy as a wire contract shared by three decoders: this Go decoder, the TypeScript SDK's, and pulsar-core's Rust crate. Its `string` and `symbol` variants carry text, but it never said what happens when a contract's `ScString` or `ScSymbol` bytes are not valid UTF-8. `ScString` is arbitrary bytes on the wire, so that case is reachable from any contract.
+
+The three decoders disagreed. A fixture holding `bad FF x E2 82 end` (a lone `0xFF`, then the first two bytes of the three-byte `€`) decoded as follows:
+
+| Decoder | Mechanism | Output |
+|---|---|---|
+| Go (before this change) | raw `string(s)`, then `encoding/json` replaces per byte | `bad�x��end`, three U+FFFD |
+| Rust, pulsar-core | `String::from_utf8_lossy` | `bad�x�end`, two |
+| TypeScript, `@pulsar-stellar/sdk` | `scValToNative`, which uses `TextDecoder` | `bad�x�end`, two |
+
+Rust and the SDK follow the Unicode Standard's recommended practice (chapter 3, "U+FFFD Substitution of Maximal Subparts"), which the WHATWG Encoding Standard also uses: one U+FFFD for each maximal subpart of an ill-formed sequence. Go was the outlier, and only because the replacement happened late, during JSON encoding, one byte at a time.
+
+The raw string had a second cost. `nameFromTopics` (`indexer/internal/rpc/events.go`, applying ADR-023's naming rule) copies a first-topic symbol's decoded value into the event's `name` column unchanged, and Postgres `text` cannot hold invalid UTF-8 (ADR-042). So a malformed symbol reached storage as bytes the engine rejects.
+
+### Decision
+
+**The decoder replaces each maximal invalid subpart with one U+FFFD, for both `ScString` and `ScSymbol`, before the value leaves `Decode`.** Valid text passes through unchanged and without allocation (a `utf8.ValidString` fast path). Invalid text goes through `golang.org/x/text/encoding/unicode`'s UTF-8 decoder, which implements the maximal-subpart rule. That module was already in the build graph as an indirect dependency at v0.31.0, and this change makes it direct at the same version.
+
+`ScSymbol` is included even though Soroban only produces valid symbols, because the decoder reads untrusted XDR and Rust already treats symbols the same way.
+
+**Verified to agree on more than the fixture.** Go with x/text v0.31.0, Rust `from_utf8_lossy`, and Node's `TextDecoder` give identical U+FFFD counts on seven inputs: the fixture (2), a truncated four-byte sequence (1), two truncated sequences (2), an overlong encoding `C0 AF` (2), a surrogate half `ED A0 80` (3), a code point above U+10FFFF (4), and two lone continuation bytes (2). `TestInvalidUTF8IsReplacedPerMaximalSubpart` pins all seven for both variants.
+
+### Alternatives considered
+
+- **Change Rust to replace per byte instead.** Rejected once the SDK was checked. Two of the three decoders, and the Unicode recommendation, already agree, and per-byte replacement is an artifact of where Go happened to sanitize, not a choice anyone made.
+- **`strings.ToValidUTF8`.** Rejected. It collapses every run of invalid bytes into one replacement, so `E2 82 E2 82` becomes one U+FFFD where the other decoders give two. It matches on the original fixture only by coincidence.
+- **A hand-written maximal-subpart loop.** Not needed, since x/text already implements it and is in the module graph.
+
+### Consequences
+
+- The three decoders agree on invalid UTF-8. The shared fixture `string_invalid_utf8` goes into the Go, Rust, and TypeScript fixture suites in a follow-up PR, with its expected JSON produced by this decoder.
+- `DecodedValue.Value` for `string` and `symbol` is always valid UTF-8, so an event `name` derived from a malformed symbol no longer carries invalid bytes. It is not yet always storable: a NUL byte is valid UTF-8, passes through unchanged, and Postgres `text` rejects it too (ADR-042). That gap predates this change and is left for its own fix.
+- Events already stored by an earlier build keep their per-byte replacement. Nothing is deployed, so no stored data is affected.
+- Any future decoder of this taxonomy must use the same rule. That is now part of the ADR-023 contract.

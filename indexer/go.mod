@@ -8,6 +8,7 @@ require (
 	github.com/graph-gophers/graphql-go v1.10.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/stellar/go-stellar-sdk v0.7.3
+	golang.org/x/text v0.31.0
 	golang.org/x/time v0.14.0
 	modernc.org/sqlite v1.57.0
 )
@@ -29,7 +30,6 @@ require (
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
