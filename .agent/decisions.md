@@ -1952,3 +1952,48 @@ A second consequence followed. Progress advanced only to the highest event ledge
 - ADR-048's consequence that a quiet contract re-enters the low side about every ten ticks no longer holds. Progress now reaches the tip, so the floor does not overtake it.
 - Tests that assumed the old rule were updated to it: the empty-page test now expects progress at the scanned tip, two scripted replies gained the end-of-window cursor real RPC always sends, and ADR-048's three tests now expect progress at the tip their drain reaches. New tests cover a 10000-ledger scan cap with events near the tip, which reproduced the live failure before the fix, and a non-advancing cursor.
 
+## ADR-050: A missing success flag is read as committed, never as reverted (carries out ADR-035's trigger)
+Date: 2026-11-09
+Status: accepted
+
+### Context
+
+ADR-035 recorded that `inSuccessfulContractCall` was deprecated, that the Go SDK holds it as a plain `bool` whose zero value is `false`, and that its removal would be silent: every event stored as reverted, with nothing reporting it. It set a trigger: act "immediately if it starts arriving empty on live data". That happened. On 2026-11-09 the indexer, run against public testnet, stored two showcase `deposit` events that had both succeeded with `in_successful_contract_call: false`. A direct `getEvents` call showed the member absent, and `getVersionInfo` reported stellar-rpc `30.0.0`, protocol 30.
+
+The same root cause broke the published SDK harder. `@pulsar-stellar/sdk@0.1.0` passes the raw event through `@stellar/stellar-sdk`, so the member arrives `undefined`, and `DecodedEventSchema` requires a boolean: `fetchLiveEvents` throws `PulsarValidationError` on every live event.
+
+Why the member went, from the sources:
+
+- The stellar-rpc CHANGELOG, v30.0.0, Breaking Changes: "`getEvents` no longer returns the `inSuccessfulContractCall` field, deprecated since protocol 23". v23.0.0 deprecated it, and in the same release: "Diagnostic events will no longer be present in the `getEvents` stream". Diagnostic events were where events from failed calls appeared.
+- CAP-67 moved Soroban events into `OperationMetaV2` in protocol 23, and states "We currently clear all `OperationMeta` when a transaction fails". A failed transaction's contract events are therefore not in the meta that getEvents serves.
+- stellar-rpc's own events-v2 work treats the flag as constant: issue #887's adapter has "`InSuccessfulContractCall` is hardcoded `true`", and issue #774 says "transaction success is not needed in the event path". PR #1050 removed the member when go-stellar-sdk's protocol 30 change (#6015) dropped the field.
+
+The documents do not state the conclusion in one sentence, so it was checked on live data. Over testnet ledgers 5641710 to 5641770, `getTransactions` reported 934 transactions, 153 of them `FAILED`, and `getEvents` with a `contract` filter returned events from all 934. Every one of the 165 events tied to a failed transaction was a `fee` event from the native asset contract (`CDLZFC3S...`), the CAP-67 fee charge and refund, which a failed transaction still pays. Not one contract-emitted event came from a failed transaction. A fee event records a charge that did commit, so for it too the effect is real.
+
+### Decision
+
+**`inSuccessfulContractCall` stays a required boolean**, in the store, the GraphQL type, the SDK's `DecodedEvent`, and the explorer, as ADR-026 set it. No consumer-facing type changes.
+
+**When RPC omits the member, it is filled in as `true`. When RPC sends it, the sent value is kept.** Today's RPC returns only events whose effects committed, so true is correct for everything it returns, and keeping a sent value stays correct for an older RPC, or a future source, that reports failures again. A missing member is never read as `false`.
+
+- Indexer: `rpc.Client.GetEvents` decodes the result itself, through jrpc2's HTTP channel, into a local type whose flag is a `*bool`, because go-stellar-sdk's `EventInfo` cannot tell absent from false. It then hands the poller an ordinary `protocol.EventInfo` with the flag resolved. The `Caller` interface and the poller are unchanged.
+- SDK: the raw RPC event shape marks the member optional, and `toLiveDecodedEvent` fills in `true` when it is missing.
+
+**ADR-035's `getTransaction` fallback is not needed and is not built.** It existed to recover the fact from transaction status if events from failed calls could still arrive unmarked. The live check shows they do not, so the per-transaction round trip would buy nothing.
+
+**The explorer's Reverted state cannot occur on today's RPC.** It stays, because the flag stays and a source that reports failures would still need it, but against stellar-rpc v30 every event renders as committed.
+
+### Alternatives considered
+
+**Remove the field.** Rejected. It would change the SDK's public type, the GraphQL schema, and the explorer for no gain, and would have to be re-added if any source reports failures again.
+
+**Always write `true`, ignoring a sent value.** Rejected. It is simpler, but it would mislabel the reverted events an older RPC still reports, and it discards information whenever it exists.
+
+**The `getTransaction` fallback.** Rejected on the evidence above. It costs a round trip per distinct transaction per batch to confirm what the protocol already guarantees.
+
+### Consequences
+
+- Carries out ADR-035's trigger. The deprecated `bool` is no longer trusted for absence, so a later go-stellar-sdk upgrade that removes it only needs the local type adjusted.
+- `@pulsar-stellar/sdk@0.1.0` stays broken for live reads until a release ships this fix. The release is 0.2.0, since `main` also carries the unpublished write-auth feature (ADR-045), and 0.1.0 is deprecated on npm pointing at it.
+- Events already stored as `false` by a pre-fix indexer are wrong. No deployment exists, so there is nothing to backfill. A future deployment would need one only if it ran a pre-fix build against RPC v30.
+- Tests: an RPC fake serving the member absent, `true`, and `false` checks all three outcomes for the indexer, and the SDK test feeds `fetchLiveEvents` a live event with the member removed. Both failed before the fix with the live symptom.
