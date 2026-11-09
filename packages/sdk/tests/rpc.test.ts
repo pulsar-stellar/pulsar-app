@@ -517,6 +517,17 @@ describe('the ADR-024 id contract', () => {
 });
 
 describe('the ADR-026 success flag', () => {
+  it('reads a v30 event with no success member as committed, not reverted', async () => {
+    // RPC v30 dropped inSuccessfulContractCall: getEvents returns only events
+    // whose effects committed (ADR-050). The member is simply absent.
+    const { inSuccessfulContractCall: _dropped, ...v30Event } = COMMITTED_EVENT;
+    servePages([{ events: [v30Event], cursor: 'c' }]);
+
+    const page = await fetchLiveEvents(CONFIG, { startLedger: 4_378_751 });
+
+    expect(page.events.map((event) => event.inSuccessfulContractCall)).toEqual([true]);
+  });
+
   it('reports a reverted call and a committed one differently', async () => {
     servePages([{ events: [REVERTED_EVENT, COMMITTED_EVENT], cursor: 'c' }]);
 
