@@ -2,8 +2,11 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -171,5 +174,66 @@ func TestIsRangeErrorLive(t *testing.T) {
 	}
 	if !IsRangeError(err) {
 		t.Fatalf("IsRangeError should be true for the live range error, got false: %v", err)
+	}
+}
+
+// fakeRPC serves one getEvents result whose single event carries flag verbatim
+// as its inSuccessfulContractCall member, or omits the member when flag is "".
+// RPC v30 omits it; earlier versions sent a boolean.
+func fakeRPC(t *testing.T, flag string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
+		member := ""
+		if flag != "" {
+			member = `,"inSuccessfulContractCall":` + flag
+		}
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"events":[{"type":"contract","ledger":5640952,`+
+			`"ledgerClosedAt":"2026-11-09T12:46:42Z","contractId":"%s","id":"0024227704358338560-0000000000",`+
+			`"operationIndex":0,"transactionIndex":8,"txHash":"0f0e"%s,"topic":[],"value":"AAAAAQ=="}],`+
+			`"cursor":"0024227704358338560-0000000000","latestLedger":5640960,"oldestLedger":5519720}}`,
+			req.ID, showcase, member)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// A missing inSuccessfulContractCall decodes to true, never to the bool zero
+// value: RPC v30 dropped the member because getEvents returns only events from
+// successful calls, and a false here would mark every committed event reverted
+// (ADR-050). A member that is present is carried through unchanged.
+func TestGetEventsSuccessFlag(t *testing.T) {
+	cases := []struct {
+		name, flag string
+		want       bool
+	}{
+		{"absent, as RPC v30 sends it", "", true},
+		{"present and true", "true", true},
+		{"present and false", "false", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := NewClient(fakeRPC(t, tc.flag).URL, nil)
+			t.Cleanup(func() { _ = client.Close() })
+
+			resp, err := client.GetEvents(context.Background(), protocol.GetEventsRequest{StartLedger: 5640952})
+			if err != nil {
+				t.Fatalf("GetEvents: %v", err)
+			}
+			if len(resp.Events) != 1 {
+				t.Fatalf("got %d events, want 1", len(resp.Events))
+			}
+			if got := resp.Events[0].InSuccessfulContractCall; got != tc.want {
+				t.Errorf("InSuccessfulContractCall = %v, want %v", got, tc.want)
+			}
+			if resp.LatestLedger != 5640960 || resp.Cursor == "" {
+				t.Errorf("response envelope not carried through: latest=%d cursor=%q", resp.LatestLedger, resp.Cursor)
+			}
+		})
 	}
 }

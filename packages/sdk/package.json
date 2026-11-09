@@ -1,6 +1,6 @@
 {
   "name": "@pulsar-stellar/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript client for Soroban contract events, over the Pulsar indexer or straight from RPC",
   "license": "Apache-2.0",
   "repository": {
@@ -11,15 +11,15 @@
   "homepage": "https://github.com/pulsar-stellar/pulsar-app/tree/main/packages/sdk#readme",
   "bugs": "https://github.com/pulsar-stellar/pulsar-app/issues",
   "keywords": [
-  "stellar",
-  "soroban",
-  "contract-events",
-  "indexer",
-  "xdr",
-  "stellar-rpc",
-  "typescript-sdk",
-  "smart-contracts",
-  "blockchain"
+    "stellar",
+    "soroban",
+    "contract-events",
+    "indexer",
+    "xdr",
+    "stellar-rpc",
+    "typescript-sdk",
+    "smart-contracts",
+    "blockchain"
   ],
   "type": "module",
   "sideEffects": false,

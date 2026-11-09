@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/creachadair/jrpc2"
+	"github.com/creachadair/jrpc2/jhttp"
 	"github.com/stellar/go-stellar-sdk/clients/rpcclient"
 	protocol "github.com/stellar/go-stellar-sdk/protocols/rpc"
 )
@@ -47,8 +48,9 @@ type Caller interface {
 // Client wraps rpcclient.Client and implements Caller. It adds context to
 // errors and is safe for concurrent use (the underlying client is too).
 type Client struct {
-	inner *rpcclient.Client
-	url   string
+	inner      *rpcclient.Client
+	url        string
+	httpClient *http.Client
 }
 
 // NewClient builds a Client pointing at the given RPC URL. The HTTP client
@@ -56,8 +58,9 @@ type Client struct {
 // Close when the client is no longer needed.
 func NewClient(rpcURL string, httpClient *http.Client) *Client {
 	return &Client{
-		inner: rpcclient.NewClient(rpcURL, httpClient),
-		url:   rpcURL,
+		inner:      rpcclient.NewClient(rpcURL, httpClient),
+		url:        rpcURL,
+		httpClient: httpClient,
 	}
 }
 
@@ -69,13 +72,49 @@ func (c *Client) Close() error {
 	return nil
 }
 
+// eventsResult decodes a getEvents result so a missing inSuccessfulContractCall
+// can be told apart from false. The outer fields shadow the embedded ones of the
+// same JSON name, so each event's member lands in the pointer, nil when absent.
+type eventsResult struct {
+	protocol.GetEventsResponse
+	Events []struct {
+		protocol.EventInfo
+		InSuccessfulContractCall *bool `json:"inSuccessfulContractCall"`
+	} `json:"events"`
+}
+
 // GetEvents fetches events matching the request.
+//
+// It decodes the result itself rather than through rpcclient, whose EventInfo
+// holds the success flag as a plain bool. RPC v30 omits that member because
+// getEvents returns only events from successful calls, and a plain bool would
+// read the omission as false, marking every committed event reverted. An absent
+// member therefore becomes true and a present one is kept (ADR-050).
 func (c *Client) GetEvents(ctx context.Context, req protocol.GetEventsRequest) (protocol.GetEventsResponse, error) {
-	resp, err := c.inner.GetEvents(ctx, req)
-	if err != nil {
+	// A client per call: a jhttp client is a thin POST wrapper, and a fresh one
+	// avoids the stale-client state rpcclient works around after an error.
+	cli := jrpc2.NewClient(jhttp.NewChannel(c.url, &jhttp.ChannelOptions{Client: c.httpClientOrDefault()}), nil)
+	defer func() { _ = cli.Close() }()
+
+	var result eventsResult
+	if err := cli.CallResult(ctx, protocol.GetEventsMethodName, req, &result); err != nil {
 		return protocol.GetEventsResponse{}, fmt.Errorf("rpc: getEvents from %s: %w", c.url, err)
 	}
+
+	resp := result.GetEventsResponse
+	resp.Events = make([]protocol.EventInfo, len(result.Events))
+	for i, e := range result.Events {
+		resp.Events[i] = e.EventInfo
+		resp.Events[i].InSuccessfulContractCall = e.InSuccessfulContractCall == nil || *e.InSuccessfulContractCall
+	}
 	return resp, nil
+}
+
+func (c *Client) httpClientOrDefault() *http.Client {
+	if c.httpClient == nil {
+		return http.DefaultClient
+	}
+	return c.httpClient
 }
 
 // GetHealth returns the node's health status.

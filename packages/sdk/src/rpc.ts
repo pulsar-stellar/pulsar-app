@@ -158,7 +158,11 @@ export interface RawRpcEvent {
   readonly txHash: string;
   readonly topic: readonly xdr.ScVal[];
   readonly value: xdr.ScVal;
-  readonly inSuccessfulContractCall: boolean;
+  /**
+   * Absent from RPC v30 on: getEvents returns only events whose effects
+   * committed, so the member was dropped (ADR-050). Older RPCs send a boolean.
+   */
+  readonly inSuccessfulContractCall?: boolean | undefined;
   readonly contractId?: { toString(): string } | undefined;
 }
 
@@ -183,7 +187,8 @@ export function toLiveDecodedEvent(event: RawRpcEvent, operation: string): Decod
     rawTopics: event.topic.map((topic) => topic.toXDR('base64')),
     rawData: event.value.toXDR('base64'),
     emittedAt: event.ledgerClosedAt,
-    inSuccessfulContractCall: event.inSuccessfulContractCall,
+    // Missing means committed, never reverted (ADR-050); a sent value is kept.
+    inSuccessfulContractCall: event.inSuccessfulContractCall ?? true,
   };
 
   const result = DecodedEventSchema.safeParse(candidate);
