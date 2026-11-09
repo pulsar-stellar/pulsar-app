@@ -16,9 +16,12 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
+	"golang.org/x/text/encoding/unicode"
 )
 
 // The variant names carried in DecodedValue.Type. They match the SDK's
@@ -265,12 +268,12 @@ func (d *Decoder) Decode(value xdr.ScVal) DecodedValue {
 
 	case xdr.ScValTypeScvString:
 		if s, ok := value.GetStr(); ok {
-			return DecodedValue{Type: TypeString, Value: string(s)}
+			return DecodedValue{Type: TypeString, Value: validUTF8(string(s))}
 		}
 
 	case xdr.ScValTypeScvSymbol:
 		if s, ok := value.GetSym(); ok {
-			return DecodedValue{Type: TypeSymbol, Value: string(s)}
+			return DecodedValue{Type: TypeSymbol, Value: validUTF8(string(s))}
 		}
 
 	case xdr.ScValTypeScvAddress:
@@ -360,3 +363,20 @@ func uint256String(parts xdr.UInt256Parts) string {
 }
 
 var _ = base64.StdEncoding
+
+// validUTF8 replaces each maximal invalid subpart with one U+FFFD, the Unicode
+// rule the Rust decoder and the SDK follow, so all three store the same text
+// (ADR-051). Left to encoding/json, Go would emit one U+FFFD per invalid byte.
+func validUTF8(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	// The x/text UTF-8 decoder replaces rather than fails on invalid input, so
+	// an error here is not expected. The fallback collapses invalid runs, which
+	// differs from the rule above but keeps decoding total and the output valid.
+	out, err := unicode.UTF8.NewDecoder().String(s)
+	if err != nil {
+		return strings.ToValidUTF8(s, "\uFFFD")
+	}
+	return out
+}

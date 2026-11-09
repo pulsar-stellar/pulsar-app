@@ -209,6 +209,45 @@ func TestBytesAreHexAndStringsAreText(t *testing.T) {
 	}
 }
 
+// ADR-051: invalid UTF-8 becomes one U+FFFD per maximal subpart, the Unicode
+// rule the Rust decoder and the TypeScript SDK already follow, rather than one
+// per byte. The expectations are the counts Rust's from_utf8_lossy and the
+// WHATWG TextDecoder produce for the same bytes.
+func TestInvalidUTF8IsReplacedPerMaximalSubpart(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"lone byte and truncated sequence", "bad\xffx\xe2\x82end", "bad�x�end"},
+		{"truncated four-byte sequence", "\xf0\x9f\x98", "�"},
+		{"two truncated sequences", "\xe2\x82\xe2\x82", "��"},
+		{"overlong encoding", "\xc0\xaf", "��"},
+		{"surrogate half", "\xed\xa0\x80", "���"},
+		{"above U+10FFFF", "\xf4\x90\x80\x80", "����"},
+		{"lone continuation bytes", "\x80\x80", "��"},
+		{"valid text is unchanged", "héllo €", "héllo €"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			str := decodeOne(t, must(t, xdr.ScValTypeScvString, xdr.ScString(tc.raw)))
+			if str.Type != "string" || str.Value != tc.want {
+				t.Errorf("string decoded to %+q, want %+q", str.Value, tc.want)
+			}
+
+			sym := decodeOne(t, must(t, xdr.ScValTypeScvSymbol, xdr.ScSymbol(tc.raw)))
+			if sym.Type != "symbol" || sym.Value != tc.want {
+				t.Errorf("symbol decoded to %+q, want %+q", sym.Value, tc.want)
+			}
+		})
+	}
+}
+
 func TestBoolAndVoid(t *testing.T) {
 	t.Parallel()
 
