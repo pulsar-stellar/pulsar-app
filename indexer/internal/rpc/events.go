@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/decoder"
@@ -34,6 +35,13 @@ const (
 	maxBackoff      = 60 * time.Second
 	backoffexponent = 2
 )
+
+// floorSafetyMargin is how far above the reported retention floor a low-side
+// recovery resumes. RPC prunes a ledger per close, so the floor getHealth
+// reports has often moved by the time getEvents arrives; ten ledgers (about 50s
+// on testnet) absorbs that round trip and costs only those ledgers' backfill
+// (ADR-048).
+const floorSafetyMargin = 10
 
 // txBeginner is the slice of *sql.DB the poller needs to open the transaction
 // that commits a batch and its cursor together. Defined here, where it is used,
@@ -169,18 +177,21 @@ func (p *Poller) tickOnce(ctx context.Context, contractID string) error {
 		return err
 	}
 
-	if len(events) == 0 {
+	// An empty drain still commits when it scanned past the stored progress,
+	// so a quiet contract reaches the tip and settles on ADR-036's high side.
+	if len(events) == 0 && highestLedger <= contract.LastIndexedLedger {
 		return nil
 	}
 
 	return p.commit(ctx, contractID, events, highestLedger)
 }
 
-// drain pages getEvents from startLedger to the end of the window, decoding as
-// it goes. It returns the assembled events and the highest ledger seen, which
-// becomes the new cursor. Paging uses the opaque response cursor and terminates
-// on an empty events array, never on the cursor, which is present even on a
-// zero-match page (ADR-028).
+// drain pages getEvents from startLedger to the tip, decoding as it goes. It
+// returns the assembled events and the highest ledger scanned, which becomes
+// the new cursor. Paging follows the response cursor, present even on a
+// zero-match page (ADR-028), and stops on a page that is not full whose cursor
+// has reached the response's latestLedger: RPC scans a bounded slice of ledgers
+// per call, so an empty page alone is not the end of the window (ADR-049).
 func (p *Poller) drain(
 	ctx context.Context,
 	contractID string,
@@ -225,16 +236,24 @@ func (p *Poller) drain(
 			assembled = append(assembled, event)
 		}
 
-		// An empty page is the end of the window. The cursor is not a
-		// has-more signal: it is populated even here (ADR-028), so the length
-		// of events is what terminates the walk.
-		if len(resp.Events) == 0 {
-			break
-		}
-
 		next, err := protocol.ParseCursor(resp.Cursor)
 		if err != nil {
 			return nil, 0, fmt.Errorf("rpc: parsing page cursor %q for %s: %w", resp.Cursor, contractID, err)
+		}
+
+		// A page that is not full ends a scan slice, and its cursor marks where
+		// the slice ended. RPC scans a bounded number of ledgers per call, so
+		// the slice end is the tip only once it reaches latestLedger; until
+		// then, keep paging (ADR-049, amending ADR-028). The tip it scanned to
+		// is the new high-water mark even when no event matched.
+		if len(resp.Events) < p.batchSize && next.Event == math.MaxUint32 && next.Ledger >= resp.LatestLedger {
+			highestLedger = max(highestLedger, int64(next.Ledger))
+			break
+		}
+
+		// A cursor that does not move forward would page forever.
+		if req.Pagination.Cursor != nil && next.Cmp(*req.Pagination.Cursor) <= 0 {
+			return nil, 0, fmt.Errorf("rpc: getEvents cursor %q for %s did not advance", resp.Cursor, contractID)
 		}
 
 		// A cursor and a ledger range cannot both be set (the SDK rejects it),
@@ -244,12 +263,6 @@ func (p *Poller) drain(
 		req.Pagination = &protocol.PaginationOptions{
 			Cursor: &cursor,
 			Limit:  uint(p.batchSize),
-		}
-
-		// A short page means the window is exhausted: fewer events came back
-		// than the limit could have carried, so there is no further page.
-		if len(resp.Events) < p.batchSize {
-			break
 		}
 	}
 
@@ -284,23 +297,27 @@ func (p *Poller) handleRangeError(
 
 	case startLedger < health.OldestLedger:
 		// Low side: the retention floor moved past our cursor. The ledgers
-		// between the old cursor and the new floor are gone from RPC; record
-		// the gap and resume from the floor (ADR-028 finding #4).
+		// below the floor are gone from RPC; record the gap and resume a
+		// safety margin above it, since the floor keeps moving while this
+		// recovery runs (ADR-028 finding #4, ADR-048). Clamped to the tip so a
+		// narrow window does not overshoot into a high-side rejection.
+		// Summed in uint64 so a bogus floor near 2^32 cannot wrap.
+		resumeAt := uint32(min(uint64(health.OldestLedger)+floorSafetyMargin, uint64(health.LatestLedger)))
 		p.logger.Warn("poll_skipped_ledgers",
 			"component", "rpc",
 			"contract_id", contractID,
 			"skipped_from", startLedger,
-			"skipped_to", health.OldestLedger-1,
-			"resumed_at", health.OldestLedger)
+			"skipped_to", resumeAt-1,
+			"floor", health.OldestLedger,
+			"resumed_at", resumeAt)
 
-		events, highestLedger, err := p.drain(ctx, contractID, health.OldestLedger)
+		events, highestLedger, err := p.drain(ctx, contractID, resumeAt)
 		if err != nil {
 			return fmt.Errorf("rpc: draining %s from the new floor: %w", contractID, err)
 		}
-		if len(events) == 0 {
-			return nil
-		}
-		return p.commit(ctx, contractID, events, highestLedger)
+		// Commit even an empty drain: the skipped ledgers are unrecoverable,
+		// so progress moves past them rather than repeating this every tick.
+		return p.commit(ctx, contractID, events, max(highestLedger, int64(resumeAt)-1))
 
 	default:
 		// startLedger is inside [oldestLedger, latestLedger], yet the call was
@@ -339,7 +356,12 @@ func (p *Poller) commit(
 		return fmt.Errorf("rpc: committing %d events for %s: %w", len(events), contractID, err)
 	}
 
-	p.logger.Info("events_indexed",
+	// An empty commit is a caught-up contract's routine tick (ADR-049).
+	level := slog.LevelInfo
+	if len(events) == 0 {
+		level = slog.LevelDebug
+	}
+	p.logger.Log(ctx, level, "events_indexed",
 		"component", "rpc",
 		"contract_id", contractID,
 		"fetched", len(events),
