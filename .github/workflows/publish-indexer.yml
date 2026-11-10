@@ -1,0 +1,177 @@
+name: publish-indexer
+
+# Publishes the indexer image to ghcr.io/pulsar-stellar/indexer (ADR-047, ADR-052).
+# Tag pushes only, and only indexer-v* tags: a merge to main never publishes, and
+# sdk-v* and other tags are ignored. A maintainer cuts the tag.
+#
+# Two jobs, so the write token and the third-party scanner never share a job.
+# build has read-only permissions: it builds the image once into an OCI archive,
+# scans that archive, and uploads it. push holds packages: write, runs no
+# third-party action, and pushes those same bytes.
+on:
+  push:
+    tags: ['indexer-v*']
+
+permissions: {}
+
+# One publish at a time, and never cancelled half way: a pushed image without
+# its pull check is the state this workflow exists to prevent.
+concurrency:
+  group: publish-indexer
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/pulsar-stellar/indexer
+
+jobs:
+  build:
+    name: build and scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      # Every action is pinned by commit, with its release in a comment: a moved
+      # tag would otherwise run whatever it now points at (ADR-052).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so the tag's commit can be checked against main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The tag becomes the image tag and the VERSION build arg stamped in with
+      # -ldflags, so it is validated before anything uses it. It reaches the
+      # script through env, never interpolated into the command text, and the
+      # assignment is separate so a rejected tag fails this step.
+      - name: Validate the tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(./scripts/indexer-image-version.sh "$TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "created=$(git log -1 --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+      # Defence in depth only: this file runs from the tagged commit, so a tag
+      # on a branch that deleted this check would skip it. The tag ruleset and
+      # the release environment's protection are what enforce it (ADR-052).
+      - name: Require the tagged commit on main
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || {
+            echo "::error::$GITHUB_SHA is not on main; tag a commit that has merged"
+            exit 1
+          }
+
+      # govulncheck sees what an image scanner can miss: it found nine Go
+      # standard library issues that Trivy did not report.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: indexer/go.mod
+          cache: false
+
+      - name: govulncheck
+        working-directory: indexer
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Built once, with no cache shared with other workflows, into an archive
+      # that is both what gets scanned and what gets pushed.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: indexer
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ steps.version.outputs.created }}
+          provenance: mode=max
+          sbom: true
+          outputs: type=oci,dest=${{ runner.temp }}/indexer.oci.tar
+
+      # Fails on a fixable HIGH or CRITICAL finding. The Trivy version is pinned
+      # and its database cache is off, so a cache another workflow wrote cannot
+      # feed this scan an empty database.
+      - name: Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: ${{ runner.temp }}/indexer.oci.tar
+          version: v0.70.0
+          cache: 'false'
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: indexer-image
+          path: ${{ runner.temp }}/indexer.oci.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    name: push and verify
+    needs: build
+    runs-on: ubuntu-latest
+    # Required reviewers and a tag rule on this environment are what keep an
+    # unreviewed tag from publishing (ADR-052).
+    environment: release
+    permissions:
+      packages: write
+
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: indexer-image
+          path: ${{ runner.temp }}
+
+      # skopeo ships on the runner image, so the job holding the write token
+      # runs no third-party action. --preserve-digests pushes the archive's
+      # bytes unchanged, attestations included, so the pushed digest is the
+      # scanned one. A version tag that already exists is refused rather than
+      # overwritten (ADR-047: released tags are immutable).
+      - name: Push
+        id: push
+        env:
+          REF: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
+          ARCHIVE: ${{ runner.temp }}/indexer.oci.tar
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          digest="$(tar -xOf "$ARCHIVE" index.json | jq -r '.manifests[0].digest')"
+          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          if skopeo inspect --raw "docker://$REF" > /dev/null 2>&1; then
+            echo "::error::$REF already exists; version tags are never overwritten"
+            exit 1
+          fi
+          skopeo copy --all --preserve-digests "oci-archive:$ARCHIVE" "docker://$REF"
+          skopeo logout ghcr.io
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # ADR-047: a new ghcr package can default to private, so the publish is
+      # only done once the image pulls with no credentials at all.
+      - name: Verify an anonymous pull
+        env:
+          REF: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          # An empty config directory holds no registry credentials.
+          DOCKER_CONFIG="$(mktemp -d)"
+          export DOCKER_CONFIG
+          err="$(mktemp)"
+          for _ in 1 2 3 4 5; do
+            if docker pull --quiet "$REF" 2> "$err"; then
+              got="$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+              [ "$got" = "$DIGEST" ] || { echo "::error::anonymous pull resolved $got, pushed $DIGEST"; exit 1; }
+              echo "anonymous pull OK: $REF@$got"
+              exit 0
+            fi
+            sleep 10
+          done
+          cat "$err"
+          echo "::error::$REF does not pull anonymously. If this is the first publish, set the package to public under the organization's Packages settings (ADR-047), then re-run this job."
+          exit 1

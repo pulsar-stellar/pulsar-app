@@ -2038,3 +2038,52 @@ The raw string had a second cost. `nameFromTopics` (`indexer/internal/rpc/events
 - `DecodedValue.Value` for `string` and `symbol` is always valid UTF-8, so an event `name` derived from a malformed symbol no longer carries invalid bytes. It is not yet always storable: a NUL byte is valid UTF-8, passes through unchanged, and Postgres `text` rejects it too (ADR-042). That gap predates this change and is left for its own fix.
 - Events already stored by an earlier build keep their per-byte replacement. Nothing is deployed, so no stored data is affected.
 - Any future decoder of this taxonomy must use the same rule. That is now part of the ADR-023 contract.
+
+## ADR-052: The indexer image publishes from protected indexer-v* tags, built once, scanned, then pushed by a job with no third-party code
+Date: 2026-11-10
+Status: accepted
+
+### Context
+
+ADR-047 settled the image's shape and its registry, `ghcr.io/pulsar-stellar/indexer`, pushed from Actions on the ambient `GITHUB_TOKEN`. The Dockerfile's review deferred four things to the publish workflow: validating the tag before it becomes the `VERSION` build arg stamped in through `-ldflags`, the version, revision, and created labels, provenance and an SBOM, and a vulnerability scan. ADR-047 also required the first publish to prove an anonymous pull rather than assume one, since a new ghcr package can default to private. This entry records how `.github/workflows/publish-indexer.yml` does that, and the choices a security review of its first draft forced.
+
+Two facts shaped it. A rehearsal showed an image scanner is not enough on its own: Trivy flagged two vulnerable modules in the indexer binary but none of nine Go standard library issues that govulncheck found reachable from the indexer's code. And on a tag push, GitHub runs the workflow file as it exists at the tagged commit, so any check written inside the workflow can be deleted by whoever controls that commit.
+
+### Decision
+
+**Only an `indexer-v*` tag publishes, and the tag and the job are protected on GitHub's side.** The trigger is the tag push, never a merge, and other tag families (`sdk-v*`) are ignored. A tag ruleset on `refs/tags/indexer-v*` restricts who can create tags and blocks updating or deleting them, and the pushing job runs in a `release` environment whose deployment rule admits only `indexer-v*` tags and whose required reviewer approves each publish. The job also refuses a tagged commit that is not on `main`, but that check is defence in depth only, for the reason above; the ruleset and the environment are the enforcement.
+
+**The tag is validated by a script with its own tests.** `scripts/indexer-image-version.sh` accepts `indexer-v<major>.<minor>.<patch>` with an optional dot-separated prerelease and nothing else: no leading zeros, no build metadata (a registry tag cannot carry `+`), no spaces or shell syntax. The tag reaches it through `env`, never interpolated into the command text, and its result is assigned before it is written out, so a rejected tag fails the step.
+
+**Two jobs, so the write token and third-party code never share one.** `build` has only `contents: read`. It runs govulncheck against the module, builds the image once into an OCI archive with a provenance attestation (`mode=max`) and an SBOM, scans that archive with Trivy (failing on a fixable HIGH or CRITICAL), and uploads it. `push` has only `packages: write`, runs no third-party action, and pushes the same archive with `skopeo copy --all --preserve-digests`, which ships on the runner image. The pushed digest is therefore the scanned digest, attestations included; a rebuild between scan and push, which the first draft had, could not promise that.
+
+**No build or scanner cache crosses workflows.** The single build uses no `type=gha` cache, and Trivy's database cache is off with its version pinned, so a cache entry another workflow wrote cannot change what is built or feed the scan an empty database.
+
+**Version tags are immutable and there is no `latest`.** The push refuses a tag that already exists rather than overwrite it, and ADR-047 already makes released tags immutable. `latest` moves by definition, so a deployment pinned to it changes under the operator, and a bug report naming it does not say which build is running. Compose and Render name an explicit version.
+
+**Every action is pinned by commit SHA**, with its release in a trailing comment, unlike the CI workflows' major-version tags. A moved tag would run whatever it now points at; a tag on a security scanner's action was rewritten in exactly this way in 2025.
+
+**Labels are reproducible from the tag:** the version, the commit SHA, and the commit timestamp as the created time.
+
+**The publish ends with an anonymous pull.** With an empty Docker config, `push` pulls the version tag and checks the resolved digest equals the pushed one. A private package fails here with a message saying to set it public, a one-time setting under the organization's package settings that the `GITHUB_TOKEN` cannot change.
+
+### Alternatives considered
+
+**One job that builds, scans, and pushes.** The first draft. Rejected after review: the scanner action received a token with `packages: write`, and the scanned and pushed images were two builds.
+
+**Push by digest, scan the pushed image, then tag it.** Rejected. It puts an unscanned image in the registry, and scanning it would need either the write token or a public package.
+
+**Trivy alone.** Rejected on the rehearsal's evidence above. govulncheck reads the module and the toolchain, and reports reachability.
+
+**`docker/metadata-action` for tags and labels.** Rejected. It writes the repository description over the Dockerfile's image description and brings an action for three labels and one tag.
+
+**Also tag `latest` for stable releases.** Rejected for the reasons above. It can be added later; removing it once people depend on it is harder.
+
+**Multi-architecture images.** Not now. Render runs amd64. An arm64 variant for local use on Apple silicon is additive later.
+
+### Consequences
+
+- The tag ruleset and the `release` environment's reviewer and deployment rule are repository settings, not files, and must exist before the first tag. Without them the workflow still runs, protected only by its own defence-in-depth check.
+- The first publish may fail at the anonymous pull if the package starts private. Setting it public and re-running the `push` job completes it. Public to private is irreversible, so that setting is one way.
+- A fixable HIGH or CRITICAL finding, or any govulncheck finding, blocks a release until the dependency or the Go version is bumped. The rehearsal's findings are fixed by moving to Go 1.26.10, compress v1.20.2, and x/text v0.41.0, which must merge before the first tag.
+- Untagged versions still accumulate, since neither registry prunes on its own (ADR-047). The scheduled cleanup is not part of this change.
