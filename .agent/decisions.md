@@ -2087,3 +2087,36 @@ Two facts shaped it. A rehearsal showed an image scanner is not enough on its ow
 - The first publish may fail at the anonymous pull if the package starts private. Setting it public and re-running the `push` job completes it. Public to private is irreversible, so that setting is one way.
 - A fixable HIGH or CRITICAL finding, or any govulncheck finding, blocks a release until the dependency or the Go version is bumped. The rehearsal's findings are fixed by moving to Go 1.26.10, compress v1.20.2, and x/text v0.41.0, which must merge before the first tag.
 - Untagged versions still accumulate, since neither registry prunes on its own (ADR-047). The scheduled cleanup is not part of this change.
+
+## ADR-053: A NUL in a decoded string is stored as U+FFFD on both engines, so one event cannot stall a contract (closes #31)
+Date: 2026-11-10
+Status: accepted
+
+### Context
+
+A Soroban `ScString` is arbitrary bytes, and the host does not validate its contents, so a contract can emit a string holding NUL. NUL is valid UTF-8, so ADR-051's replacement leaves it in place, and `encoding/json` writes it as `\u0000` in `topics_json` and `data_json`.
+
+Postgres `jsonb` rejects that escape (`ERROR: unsupported Unicode escape sequence`, SQLSTATE 22P05). SQLite stores it. So the two engines diverged, and on Postgres, the deployed engine (ADR-047), the insert failed. `Poller.commit` writes a batch and its cursor in one transaction, so the failure rolled the cursor back, and every later tick refetched and failed on the same batch. One such event stalled its contract permanently, and anyone could cause it by deploying a contract that emits `"\0"`.
+
+Symbols are not affected. The host checks every symbol byte against `[_0-9A-Za-z]` (`soroban-env-host` 27.0.1, `host_object.rs:292` and `host.rs:1015`), so the `name` column, which only ever holds a symbol (ADR-023), cannot carry NUL on real data.
+
+### Decision
+
+**`store.Events.Insert` replaces each NUL in a string value of `topics_json` and `data_json` with U+FFFD, on both engines, before the insert.** JSON with no `\u0000` passes through byte for byte. JSON that has one is parsed, with numbers kept exact (`UseNumber`), and re-encoded with the NUL replaced and nothing else changed. Trailing data after the value is an error, as it would be on the fast path. Object keys are not touched: in the ADR-023 taxonomy they are fixed field names, and a contract map's keys are values under `"key"`. A string holding the escaped text `\u0000` (a backslash followed by `u0000`) is not a NUL and is left alone.
+
+**`raw_topics` and `raw_data` keep the exact XDR RPC sent.** The replacement is a storage constraint, not a decoding decision, so the original bytes stay recoverable from the raw columns.
+
+**The decoder's output does not change.** ADR-023's taxonomy and ADR-051's rule stay as they are in all three decoders, so no fixture or SDK change follows. The replacement lives in the store because the constraint belongs to the storage engine, and the store is the one path every writer and both engines share.
+
+### Alternatives considered
+
+- **Replace NUL in the decoder, in Go, Rust and the SDK.** Rejected. NUL is a valid character, and changing the shared decoded form for a limit only Postgres `jsonb` has would put a lossy step on paths that can carry it, such as the SDK's live tail from RPC.
+- **Drop the event, or degrade it to `unknown`.** Rejected. The event happened. Dropping it loses data, and `unknown` would throw away the decoded topics and data for one character.
+- **Store a reversible escape such as U+2400.** Rejected. It collides with a real U+2400 in the data, so it is not reversible either, and the raw XDR already is.
+- **Change the columns to `json` or `text` on Postgres.** Rejected. It gives up the `jsonb` functions the topic filter uses (`jsonb_typeof`, `jsonb_array_elements`, ADR-041), for one character.
+
+### Consequences
+
+- A contract emitting NUL in a string is indexed like any other, and its cursor moves past the event. `TestATickCommitsPastAStringHoldingNUL` runs one tick over such a batch on SQLite and on Postgres (CI's service container) and asserts the progress, both stored events, and the raw XDR.
+- The stored JSON is the same on both engines. `TestInsertReplacesNULInStringValues` and its Postgres twin pin it, including a NUL in a contract map's key value, in a nested vec, and the escaped-text case.
+- The REST and GraphQL APIs return U+FFFD where the contract emitted NUL. The SDK's live tail from RPC still returns the NUL, so the two paths differ for this one character. A consumer that needs the exact bytes decodes `raw_data` or `raw_topics`.
