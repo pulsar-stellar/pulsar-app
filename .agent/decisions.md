@@ -2161,3 +2161,38 @@ The indexer also reads `PULSAR_INDEXER_LISTEN_ADDR`, not Render's `PORT`.
 - Free plan: the web service sleeps after 15 minutes without inbound requests, and the poller stops while it sleeps. It resumes from its cursor on wake, so a gap shorter than RPC's seven-day retention is caught up. The free database expires after 30 days.
 - Only the write routes are rate-limited (ADR-044). The read routes and `/graphql` are public, with GraphQL's shape limits and the request deadline as their only bounds. On a 0.1-CPU database, sustained anonymous reads could starve the poller. ADR-010 asks for rate limiting from the start, so a read-side limiter is owed and tracked as an issue.
 - `docs/requirements.md` no longer says the deploy files are absent, and its Render setup line points here.
+
+## ADR-055: The public reads and /graphql share one token bucket, separate from the writes, with /health outside it (closes #39)
+Date: 2026-11-10
+Status: accepted
+
+### Context
+
+ADR-044 rate-limited only the write routes. With the indexer live on Render (ADR-054), `GET /contracts`, `GET /contracts/{id}`, `GET /contracts/{id}/events`, `GET /events/{id}` and `POST /graphql` are open to anyone. Their only bounds are GraphQL's shape limits (ADR-043) and the 15 s request deadline. The deployed pool holds 5 connections to a 0.1-CPU Postgres, which the poller shares, so a steady stream of anonymous reads can starve the poller of connections and CPU and stop indexing. ADR-010 asks for rate limiting on the public API from the start.
+
+Issue #39 asked for a read bucket with its own `PULSAR_INDEXER_READ_RATE_PER_SEC` and `_BURST`, a 429 `RATE_LIMITED` envelope, `/health` safe from it, and a recorded decision on keying per client IP behind Render's proxy.
+
+### Decision
+
+**One token bucket covers every public read route and `POST /graphql`, shared by all clients, separate from the write bucket.** It defaults to 10 requests per second with a burst of 20, both configurable and validated as positive at startup. A request over budget gets the 429 `RATE_LIMITED` envelope ADR-044 already defines, with the message naming the read surface. Each GraphQL request spends one token, whatever its shape.
+
+**The bucket is global, not per client IP.** The harm #39 names is total load on a small database the poller shares, and a global bucket caps that directly. Keying per IP would mean trusting `X-Forwarded-For` behind Render's proxy. Whether Render overwrites that header or appends to a client-supplied one has not been verified, and if it appends, any client can choose its own key and walk past a per-IP limit. A per-IP map also needs its own bound to avoid becoming a memory-exhaustion vector, the reason ADR-044 kept the write bucket global.
+
+**The read and write buckets are independent.** A read flood cannot lock the operator out of `POST /contracts` or `DELETE /contracts/{id}`, and writes do not spend the readers' budget.
+
+**`GET /health` is outside the bucket, and its store read is cached.** Render's health check calls it, and a spent bucket that failed the check would get a healthy instance restarted, turning a read flood into an outage. Instead, a successful health read is reused for one second, so a flood of health requests costs about one query per second and cannot take the poller's connections. A failed read is not cached, so the next check sees the store recover. Unmatched routes and wrong methods are not limited either (both answer 404, the latter with `NOT_FOUND_METHOD`, per ADR-017); they do not reach the store.
+
+### Alternatives considered
+
+- **Per-IP buckets keyed on `X-Forwarded-For`.** Deferred, not rejected. It needs Render's header behaviour verified first, for example with a route that echoes the header it receives, plus a bounded, expiring map. The trigger to revisit is a single client measurably crowding out others.
+- **Per-IP buckets keyed on the TCP peer address.** Rejected. Behind Render's proxy every request arrives from the proxy, so this collapses to one global bucket with extra bookkeeping.
+- **A smaller bucket on `/health` instead of none.** Rejected. Any limit an attacker can spend is a limit Render's own health check can fail.
+- **Weighting GraphQL requests by query cost.** Not now. The shape limits already bound a single request, and one token per request is enough to protect the pool.
+
+### Consequences
+
+- The poller's share of the pool and CPU is protected from anonymous reads. Sustained traffic above 10 requests per second gets 429s.
+- One client can spend the whole read budget and make other readers see 429s until it refills. That is the cost of a global bucket, accepted until per-IP keying is verified.
+- The explorer, once deployed, reaches the indexer from its host's servers, so all explorer users draw on this one bucket. Raise `PULSAR_INDEXER_READ_RATE_PER_SEC` on Render if real traffic needs it.
+- `/health` stays unlimited, but its one query (`SELECT COUNT(*), COALESCE(MAX(last_indexed_ledger), 0) FROM contracts`) runs at most about once per second whatever the request rate. Its `latest_ledger` can therefore be up to a second stale, which is well inside a poll interval. GraphQL's own health field is not cached; it spends from the read bucket like any other GraphQL request.
+- `render.yaml` sets neither variable, so the deployed indexer runs on the defaults.

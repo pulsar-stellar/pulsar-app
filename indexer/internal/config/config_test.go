@@ -72,6 +72,12 @@ func TestLoadAppliesDocumentedDefaults(t *testing.T) {
 	if cfg.WriteRateBurst != 10 {
 		t.Errorf("WriteRateBurst = %d, want 10", cfg.WriteRateBurst)
 	}
+	if cfg.ReadRatePerSec != 10 {
+		t.Errorf("ReadRatePerSec = %d, want 10", cfg.ReadRatePerSec)
+	}
+	if cfg.ReadRateBurst != 20 {
+		t.Errorf("ReadRateBurst = %d, want 20", cfg.ReadRateBurst)
+	}
 	if cfg.ReadTimeout != 15*time.Second {
 		t.Errorf("ReadTimeout = %v, want %v", cfg.ReadTimeout, 15*time.Second)
 	}
@@ -94,6 +100,8 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		env["PULSAR_INDEXER_ADMIN_TOKEN"] = "a-sufficiently-long-admin-token"
 		env["PULSAR_INDEXER_WRITE_RATE_PER_SEC"] = "20"
 		env["PULSAR_INDEXER_WRITE_RATE_BURST"] = "40"
+		env["PULSAR_INDEXER_READ_RATE_PER_SEC"] = "50"
+		env["PULSAR_INDEXER_READ_RATE_BURST"] = "100"
 		env["PULSAR_INDEXER_READ_TIMEOUT_SEC"] = "30"
 	})
 	if err != nil {
@@ -114,6 +122,8 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		AdminToken:         "a-sufficiently-long-admin-token",
 		WriteRatePerSec:    20,
 		WriteRateBurst:     40,
+		ReadRatePerSec:     50,
+		ReadRateBurst:      100,
 		ReadTimeout:        30 * time.Second,
 	}
 
@@ -123,6 +133,7 @@ func TestLoadReadsEveryVariable(t *testing.T) {
 		cfg.Network != want.Network || cfg.PollInterval != want.PollInterval ||
 		cfg.BatchSize != want.BatchSize || cfg.AdminToken != want.AdminToken ||
 		cfg.WriteRatePerSec != want.WriteRatePerSec || cfg.WriteRateBurst != want.WriteRateBurst ||
+		cfg.ReadRatePerSec != want.ReadRatePerSec || cfg.ReadRateBurst != want.ReadRateBurst ||
 		cfg.ReadTimeout != want.ReadTimeout {
 		t.Errorf("Load = %+v, want %+v", cfg, want)
 	}
@@ -212,6 +223,12 @@ func TestLoadRejectsNonPositiveAndUnparseableNumbers(t *testing.T) {
 		{"PULSAR_INDEXER_WRITE_RATE_BURST", "0"},
 		{"PULSAR_INDEXER_WRITE_RATE_BURST", "-1"},
 		{"PULSAR_INDEXER_WRITE_RATE_BURST", "many"},
+		{"PULSAR_INDEXER_READ_RATE_PER_SEC", "0"},
+		{"PULSAR_INDEXER_READ_RATE_PER_SEC", "-5"},
+		{"PULSAR_INDEXER_READ_RATE_PER_SEC", "fast"},
+		{"PULSAR_INDEXER_READ_RATE_BURST", "0"},
+		{"PULSAR_INDEXER_READ_RATE_BURST", "-1"},
+		{"PULSAR_INDEXER_READ_RATE_BURST", "many"},
 		{"PULSAR_INDEXER_READ_TIMEOUT_SEC", "0"},
 		{"PULSAR_INDEXER_READ_TIMEOUT_SEC", "-30"},
 		{"PULSAR_INDEXER_READ_TIMEOUT_SEC", "30s"},

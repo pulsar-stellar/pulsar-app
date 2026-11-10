@@ -2,12 +2,14 @@ package api
 
 import (
 	"log/slog"
+	"sync"
 	"time"
 
 	graphql "github.com/graph-gophers/graphql-go"
 	"golang.org/x/time/rate"
 
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/logger"
+	"github.com/pulsar-stellar/pulsar-app/indexer/internal/store"
 )
 
 // Server holds the dependencies the HTTP handlers share and is the composition
@@ -48,6 +50,20 @@ type Server struct {
 	// four-argument NewServer produces.
 	writeLimiter *rate.Limiter
 
+	// readLimiter caps the public read routes and /graphql when set by
+	// WithReadRateLimit (ADR-055). It is a separate bucket from writeLimiter.
+	readLimiter *rate.Limiter
+
+	// now is the clock the health cache reads, replaceable in tests.
+	now func() time.Time
+
+	// healthMu guards the cached /health store read (ADR-055). /health is
+	// outside the read bucket, so a successful read is reused for
+	// healthCacheTTL rather than repeated per request.
+	healthMu    sync.Mutex
+	healthAt    time.Time
+	healthStats store.ContractStats
+
 	// readTimeout bounds the wall-clock time any request may spend downstream
 	// when set by WithReadTimeout. A non-positive value disables the guard, so a
 	// four-argument NewServer applies none.
@@ -82,6 +98,20 @@ func WithWriteRateLimit(perSec, burst int) Option {
 	}
 }
 
+// WithReadRateLimit mounts a shared token bucket over the public read routes
+// and /graphql, sized at perSec sustained requests with a burst ceiling
+// (ADR-055). /health is not covered, so a spent bucket cannot fail the
+// platform's health check. Like the write bucket it is global rather than per
+// client, and a non-positive perSec or burst leaves it unset.
+func WithReadRateLimit(perSec, burst int) Option {
+	return func(s *Server) {
+		if perSec <= 0 || burst <= 0 {
+			return
+		}
+		s.readLimiter = rate.NewLimiter(rate.Limit(perSec), burst)
+	}
+}
+
 // WithReadTimeout bounds the wall-clock time any request may spend downstream,
 // applied surface-wide (ADR-044). It is a distinct guard from the GraphQL
 // query-shape limits: it bounds time in the store or RPC for any request. A
@@ -109,6 +139,7 @@ func NewServer(log *slog.Logger, contracts contractStore, events eventStore, ver
 		contracts: contracts,
 		events:    events,
 		version:   version,
+		now:       time.Now,
 	}
 	for _, opt := range opts {
 		opt(s)

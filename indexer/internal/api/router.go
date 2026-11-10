@@ -25,34 +25,43 @@ func (s *Server) Routes() http.Handler {
 	// when one is configured (ADR-044). RateLimit is listed before RequireAuth so
 	// it wraps it: an unauthenticated flood is capped before the auth comparison
 	// runs. writeMiddleware collects the guards so both write routes carry the
-	// same stack, and reads carry none.
+	// same stack.
 	writeMiddleware := make([]func(http.Handler) http.Handler, 0, 2)
 	if s.writeLimiter != nil {
-		writeMiddleware = append(writeMiddleware, RateLimit(s.writeLimiter))
+		writeMiddleware = append(writeMiddleware, RateLimit(s.writeLimiter, "write"))
 	}
 	writeMiddleware = append(writeMiddleware, RequireAuth(s.authToken))
+
+	// The public reads and /graphql spend from their own bucket when one is
+	// configured (ADR-055), separate from the writes' so a read flood cannot
+	// lock the operator out. /health above is deliberately outside it, so a
+	// spent bucket never fails the platform's health check.
+	var readMiddleware []func(http.Handler) http.Handler
+	if s.readLimiter != nil {
+		readMiddleware = append(readMiddleware, RateLimit(s.readLimiter, "read"))
+	}
 
 	// The contract routes are registered flat rather than under a chi subrouter
 	// so /contracts matches the SDK's paths exactly, with no trailing slash and
 	// no redirect. List and get are public reads; register and delete are the
 	// write surface and carry the auth (and rate-limit) middleware inline, so the
 	// GET on the same path stays open.
-	r.Get("/contracts", s.handleListContracts)
+	r.With(readMiddleware...).Get("/contracts", s.handleListContracts)
 	r.With(writeMiddleware...).Post("/contracts", s.handleRegisterContract)
-	r.Get("/contracts/{id}", s.handleGetContract)
+	r.With(readMiddleware...).Get("/contracts/{id}", s.handleGetContract)
 	r.With(writeMiddleware...).Delete("/contracts/{id}", s.handleDeleteContract)
 
 	// The events routes are registered flat for the same reason as the contract
 	// routes: the paths match the SDK's exactly. The list route is nested under a
 	// contract; the single-event route is top-level, keyed by the event's own id.
-	r.Get("/contracts/{id}/events", s.handleListEvents)
-	r.Get("/events/{id}", s.handleGetEvent)
+	r.With(readMiddleware...).Get("/contracts/{id}/events", s.handleListEvents)
+	r.With(readMiddleware...).Get("/events/{id}", s.handleGetEvent)
 
 	// The GraphQL read surface is a single POST endpoint over the same data, with
 	// nesting the REST routes cannot express (ADR-043). It is registered after the
 	// REST routes so it too is wrapped by the middleware below, inheriting request
 	// logging, panic recovery, and the request id.
-	r.Post("/graphql", s.handleGraphQL)
+	r.With(readMiddleware...).Post("/graphql", s.handleGraphQL)
 
 	// The surface-wide chain wraps the whole mux, not chi's Use stack: chi skips
 	// its Use middleware for the not-found path until a route is registered, so

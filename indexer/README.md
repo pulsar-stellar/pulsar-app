@@ -71,6 +71,8 @@ publishable default.
 | `PULSAR_INDEXER_BOOTSTRAP_CONTRACTS` | no | empty | Comma-separated contract IDs tracked on first run. |
 | `PULSAR_INDEXER_WRITE_RATE_PER_SEC` | no | `5` | Sustained requests per second allowed on the write surface. |
 | `PULSAR_INDEXER_WRITE_RATE_BURST` | no | `10` | Burst the write limiter tolerates above the sustained rate. |
+| `PULSAR_INDEXER_READ_RATE_PER_SEC` | no | `10` | Sustained requests per second allowed across the public reads and `/graphql`, shared by every client (ADR-055). `/health` is not limited. |
+| `PULSAR_INDEXER_READ_RATE_BURST` | no | `20` | Burst the read limiter tolerates above the sustained rate. |
 | `PULSAR_INDEXER_LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. |
 | `PULSAR_INDEXER_LOG_FORMAT` | no | `json` | `json` or `text`. |
 | `PULSAR_INDEXER_READ_TIMEOUT_SEC` | no | `15` | Wall-clock ceiling on the time any request may spend downstream. |
@@ -182,6 +184,14 @@ curl -X POST http://localhost:8080/contracts \
   caller over the write rate limit returns `429` with the `RATE_LIMITED` code;
   the limiter sits outside the auth check, so an unauthenticated flood is capped
   before the comparison runs.
+
+The reads and `POST /graphql` need no token but share their own rate limit
+(ADR-055): a token bucket set by `PULSAR_INDEXER_READ_RATE_PER_SEC` and
+`PULSAR_INDEXER_READ_RATE_BURST`, separate from the write bucket. Over it, a
+request gets the same `429` `RATE_LIMITED` envelope. The bucket is shared by
+every client rather than kept per IP. `GET /health` is outside it, and its
+store read is cached for a second instead, so health checks cannot be starved
+and a flood of them cannot reach the database more than once a second.
 
 `DELETE` is the sharp edge: it cascades to every indexed event under the
 contract, so one authenticated delete removes the contract and its whole event

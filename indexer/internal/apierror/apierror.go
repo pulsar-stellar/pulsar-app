@@ -137,8 +137,9 @@ const CodeNotFoundEvent Code = "NOT_FOUND_EVENT"
 // oracle, and the token itself is never logged or echoed.
 const CodeUnauthorized Code = "UNAUTHORIZED"
 
-// CodeRateLimited is returned when a request to a write route is refused because
-// the write-surface token bucket is empty. Per ADR-044 it rides on a 429 with
+// CodeRateLimited is returned when a request is refused because its surface's
+// token bucket is empty: the write routes' (ADR-044) or the public reads' and
+// /graphql's (ADR-055). It rides on a 429 with
 // the existing rate_limited class ADR-017 already fixed, so it adds a catalog
 // code without widening the class set the way CodeUnauthorized does.
 const CodeRateLimited Code = "RATE_LIMITED"
