@@ -47,7 +47,7 @@ The project depends on the following. Each entry includes: what it does, why we 
 
 ### 1.3 Deployment (planned, nothing deployed)
 
-Nothing in this section is live, and no deployment artifact exists in this repo: no `deploy/` directory, no `render.yaml`, no `vercel.json`, no `Dockerfile`, no `docker-compose.yml`. The entries below are the target shape, not the current state. The platform split is recorded in ADR-010 and the packaging decisions in ADR-047; the files land in Phase J.
+The deployment files are `indexer/Dockerfile`, the root `docker-compose.yml`, and the root `render.yaml`. There is no `deploy/` directory, and `vercel.json` is still to come. The platform split is recorded in ADR-010 and the packaging decisions in ADR-047; the files land in Phase J.
 
 **Vercel** (Next.js web explorer)
 - Hosts: `apps/web` from `pulsar-app`
@@ -58,8 +58,8 @@ Nothing in this section is live, and no deployment artifact exists in this repo:
 **Render** (Go indexer + Postgres)
 - Hosts: indexer as a web service, Postgres as a managed database
 - Uses internal connection string when both are in the same region
-- Setup (planned): connect GitHub, create the service, provision Postgres in the same region. Whether the service is declared in a blueprint file or created through the dashboard, and where that file would live, is settled in Phase J against Render's current requirements rather than assumed here.
-- Credentials: none in repo. All env vars in Render dashboard. `DATABASE_URL` auto-provisioned by Render.
+- Setup: a Blueprint, `render.yaml` at the repository root, declares the service (the published image, pinned by digest) and its Postgres in the same region (ADR-054).
+- Credentials: none in repo. The admin token is entered in the Render dashboard, and the database URL is wired from the managed instance by the Blueprint.
 
 Do not migrate everything to one platform to save on cognitive overhead. The split platforms are purpose-built and cheaper this way.
 
