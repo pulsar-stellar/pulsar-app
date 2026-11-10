@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/apierror"
+	"github.com/pulsar-stellar/pulsar-app/indexer/internal/store"
 )
 
 // A write route admits a request that carries the configured bearer token: the
@@ -187,6 +190,145 @@ func TestRateLimitLeavesReadsUnbounded(t *testing.T) {
 		if rr := serve(srv, http.MethodGet, "/health", ""); rr.Code == http.StatusTooManyRequests {
 			t.Fatalf("GET /health was rate-limited; the write limiter must not bound reads")
 		}
+	}
+}
+
+// The read surface has its own bucket (ADR-055): with a burst of two, the first
+// two reads pass and the third is refused with the 429 RATE_LIMITED envelope.
+func TestReadRateLimitRefusesReadsOverBudget(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3", WithReadRateLimit(1, 2))
+
+	for i := 0; i < 2; i++ {
+		if rr := serve(srv, http.MethodGet, "/contracts", ""); rr.Code == http.StatusTooManyRequests {
+			t.Fatalf("read %d was rate-limited within the burst budget", i+1)
+		}
+	}
+
+	rr := serve(srv, http.MethodGet, "/contracts", "")
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("third read status = %d, want 429 once the burst is spent", rr.Code)
+	}
+	var env decodedError
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatalf("body is not JSON: %v; body=%s", err, rr.Body.String())
+	}
+	if env.Error.Code != "rate_limited" || env.Error.Details.Code != string(apierror.CodeRateLimited) {
+		t.Errorf("error = %+v, want the rate_limited / %s envelope", env.Error, apierror.CodeRateLimited)
+	}
+}
+
+// Every public read route, REST and GraphQL, spends from the read bucket: with a
+// burst of one, the second request to any of them is refused.
+func TestReadRateLimitCoversEveryReadRoute(t *testing.T) {
+	t.Parallel()
+
+	routes := []struct{ method, target, body string }{
+		{http.MethodGet, "/contracts", ""},
+		{http.MethodGet, "/contracts/" + validContractID, ""},
+		{http.MethodGet, "/contracts/" + validContractID + "/events", ""},
+		{http.MethodGet, "/events/1", ""},
+		{http.MethodPost, "/graphql", `{"query":"{ health { ok } }"}`},
+	}
+	for _, route := range routes {
+		t.Run(route.method+" "+route.target, func(t *testing.T) {
+			t.Parallel()
+
+			srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3", WithReadRateLimit(1, 1))
+			serve(srv, route.method, route.target, route.body)
+			if rr := serve(srv, route.method, route.target, route.body); rr.Code != http.StatusTooManyRequests {
+				t.Errorf("second request status = %d, want 429: this read route is not rate-limited", rr.Code)
+			}
+		})
+	}
+}
+
+// /health stays outside the read bucket, so a spent bucket never fails the
+// platform's health check and gets a healthy instance restarted.
+func TestReadRateLimitExemptsHealth(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3", WithReadRateLimit(1, 1))
+	serve(srv, http.MethodGet, "/contracts", "") // spend the only token
+
+	for i := 0; i < 5; i++ {
+		if rr := serve(srv, http.MethodGet, "/health", ""); rr.Code == http.StatusTooManyRequests {
+			t.Fatal("GET /health was rate-limited by the read bucket")
+		}
+	}
+}
+
+// The read and write buckets are separate: a read flood cannot lock the operator
+// out of the write routes, and writes do not spend the readers' budget.
+func TestReadAndWriteBucketsAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3",
+		WithAuthToken(testAuthToken), WithWriteRateLimit(1, 1), WithReadRateLimit(1, 1))
+
+	serve(srv, http.MethodGet, "/contracts", "") // spend the read token
+	if rr := serveAuthed(srv, http.MethodPost, "/contracts", `{"contract_id":"`+validContractID+`"}`); rr.Code == http.StatusTooManyRequests {
+		t.Fatal("a write was refused after only the read bucket was spent")
+	}
+	if rr := serve(srv, http.MethodGet, "/contracts", ""); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("read status = %d, want 429: a write must not refill or bypass the read bucket", rr.Code)
+	}
+}
+
+// countingStats counts the store reads /health makes.
+type countingStats struct {
+	fakeContracts
+	calls atomic.Int64
+}
+
+func (c *countingStats) Stats(ctx context.Context) (store.ContractStats, error) {
+	c.calls.Add(1)
+	return c.fakeContracts.Stats(ctx)
+}
+
+// /health is outside the read bucket, so its store read is cached for a second
+// (ADR-055): a flood of health requests costs about one query per second and
+// cannot take the poller's connections, while each answer stays fresh enough
+// for the platform's health check.
+func TestHealthReadsTheStoreAtMostOncePerInterval(t *testing.T) {
+	t.Parallel()
+
+	counted := &countingStats{}
+	srv := NewServer(nil, counted, fakeEvents{}, "1.2.3")
+	now := time.Unix(1_800_000_000, 0)
+	srv.now = func() time.Time { return now }
+
+	for i := 0; i < 10; i++ {
+		if rr := serve(srv, http.MethodGet, "/health", ""); rr.Code != http.StatusOK {
+			t.Fatalf("health status = %d, want 200", rr.Code)
+		}
+	}
+	if got := counted.calls.Load(); got != 1 {
+		t.Errorf("10 health requests read the store %d times, want 1", got)
+	}
+
+	now = now.Add(healthCacheTTL)
+	serve(srv, http.MethodGet, "/health", "")
+	if got := counted.calls.Load(); got != 2 {
+		t.Errorf("after the interval the store was read %d times in total, want 2", got)
+	}
+}
+
+// A failed store read is not cached, so the next health check sees recovery.
+func TestHealthDoesNotCacheAFailure(t *testing.T) {
+	t.Parallel()
+
+	counted := &countingStats{fakeContracts: fakeContracts{err: errors.New("store down")}}
+	srv := NewServer(nil, counted, fakeEvents{}, "1.2.3")
+
+	for i := 0; i < 2; i++ {
+		if rr := serve(srv, http.MethodGet, "/health", ""); rr.Code != http.StatusInternalServerError {
+			t.Fatalf("health status = %d, want 500 while the store fails", rr.Code)
+		}
+	}
+	if got := counted.calls.Load(); got != 2 {
+		t.Errorf("two failing health requests read the store %d times, want 2", got)
 	}
 }
 

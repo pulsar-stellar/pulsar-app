@@ -99,7 +99,7 @@ type healthPayload struct {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	stats, err := s.contracts.Stats(r.Context())
+	stats, err := s.healthStatsCached(r.Context())
 	if err != nil {
 		s.log.ErrorContext(r.Context(), "health_stats_failed",
 			"request_id", RequestIDFromContext(r.Context()),
@@ -116,6 +116,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		TrackedContracts: stats.Count,
 	}
 	writeData(w, http.StatusOK, body, elapsedMs(start))
+}
+
+// healthCacheTTL is how long a successful /health store read is reused.
+const healthCacheTTL = time.Second
+
+// healthStatsCached returns the contract stats /health reports, reading the
+// store at most once per healthCacheTTL (ADR-055). /health is outside the read
+// bucket so the platform's health check never trips it, and the cache is what
+// keeps a flood of health requests from taking the poller's connections. A
+// failed read is not cached, so the next check sees the store recover.
+func (s *Server) healthStatsCached(ctx context.Context) (store.ContractStats, error) {
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+
+	if !s.healthAt.IsZero() && s.now().Sub(s.healthAt) < healthCacheTTL {
+		return s.healthStats, nil
+	}
+	stats, err := s.contracts.Stats(ctx)
+	if err != nil {
+		return store.ContractStats{}, err
+	}
+	s.healthStats, s.healthAt = stats, s.now()
+	return stats, nil
 }
 
 // handleListContracts answers GET /contracts with the tracked contracts under

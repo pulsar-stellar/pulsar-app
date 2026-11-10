@@ -65,6 +65,12 @@ type Config struct {
 	WriteRatePerSec int
 	WriteRateBurst  int
 
+	// ReadRatePerSec and ReadRateBurst size the token bucket over the public
+	// read routes and /graphql (ADR-055). It is separate from the write bucket,
+	// so a read flood cannot lock the operator out of the write routes.
+	ReadRatePerSec int
+	ReadRateBurst  int
+
 	// ReadTimeout bounds the wall-clock time any request may spend in a
 	// handler, applied surface-wide (ADR-044). It is a distinct guard from the
 	// GraphQL query-shape limits: it bounds time in the store or RPC for any
@@ -198,6 +204,18 @@ func Load(getenv Getenv) (Config, error) {
 		return Config{}, err
 	}
 	cfg.WriteRateBurst = writeRateBurst
+
+	readRatePerSec, err := positiveInt(getenv, "PULSAR_INDEXER_READ_RATE_PER_SEC", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ReadRatePerSec = readRatePerSec
+
+	readRateBurst, err := positiveInt(getenv, "PULSAR_INDEXER_READ_RATE_BURST", 20)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ReadRateBurst = readRateBurst
 
 	readTimeoutSec, err := positiveInt(getenv, "PULSAR_INDEXER_READ_TIMEOUT_SEC", 15)
 	if err != nil {

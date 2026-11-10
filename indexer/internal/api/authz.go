@@ -64,16 +64,18 @@ func bearerToken(header string) (string, bool) {
 
 // RateLimit returns middleware that admits a request only when the shared token
 // bucket has a token to spend, and otherwise refuses it with a 429 RATE_LIMITED
-// envelope (ADR-044). The limiter is global across the routes it wraps rather
+// envelope (ADR-044, ADR-055). surface names the bucket in the message, "write"
+// or "read". The limiter is global across the routes it wraps rather
 // than per-client: the write surface has a single operator, so a global bucket
 // bounds the write rate without the unbounded per-IP map that would itself be a
 // memory-exhaustion vector. It is mounted outside RequireAuth so an
 // unauthenticated flood is capped before the auth comparison runs.
-func RateLimit(limiter *rate.Limiter) func(http.Handler) http.Handler {
+func RateLimit(limiter *rate.Limiter, surface string) func(http.Handler) http.Handler {
+	message := "Too many " + surface + " requests; retry after a short wait."
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !limiter.Allow() {
-				writeError(w, apierror.New(apierror.CodeRateLimited, "Too many write requests; retry after a short wait."))
+				writeError(w, apierror.New(apierror.CodeRateLimited, message))
 				return
 			}
 			next.ServeHTTP(w, r)
