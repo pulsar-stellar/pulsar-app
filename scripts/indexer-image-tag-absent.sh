@@ -10,9 +10,11 @@
 #
 # It fails closed. skopeo exits 1 for a missing tag and for a dropped connection
 # alike, so treating any failure as "absent" would let a transient error on a
-# re-run push over a released version. Only the registry's not-found answers,
-# MANIFEST_UNKNOWN for a missing tag and NAME_UNKNOWN for a package not created
-# yet, count as absent.
+# re-run push over a released version. Only the registry's not-found answers
+# count as absent: MANIFEST_UNKNOWN for a missing tag, seen from ghcr.io, and
+# NAME_UNKNOWN, the distribution spec's unknown-repository code. What ghcr.io
+# answers an authenticated push token for a package not created yet is not
+# confirmed; if it is neither, this refuses, which is the intended side to err.
 set -euo pipefail
 
 ref="${1:?usage: indexer-image-tag-absent.sh <registry>/<name>:<tag>}"
