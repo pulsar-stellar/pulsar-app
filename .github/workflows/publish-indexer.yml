@@ -94,13 +94,21 @@ jobs:
           sbom: true
           outputs: type=oci,dest=${{ runner.temp }}/indexer.oci.tar
 
+      # Trivy's --input reads a docker-save tarball or an OCI layout directory,
+      # not an OCI archive, so the scan reads an unpacked copy. The archive
+      # itself is what gets uploaded and pushed.
+      - name: Unpack for scanning
+        run: |
+          mkdir "$RUNNER_TEMP/indexer.oci"
+          tar -xf "$RUNNER_TEMP/indexer.oci.tar" -C "$RUNNER_TEMP/indexer.oci"
+
       # Fails on a fixable HIGH or CRITICAL finding. The Trivy version is pinned
       # and its database cache is off, so a cache another workflow wrote cannot
       # feed this scan an empty database.
       - name: Scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          input: ${{ runner.temp }}/indexer.oci.tar
+          input: ${{ runner.temp }}/indexer.oci
           version: v0.70.0
           cache: 'false'
           severity: CRITICAL,HIGH
