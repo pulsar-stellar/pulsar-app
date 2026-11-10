@@ -2120,3 +2120,44 @@ Symbols are not affected. The host checks every symbol byte against `[_0-9A-Za-z
 - A contract emitting NUL in a string is indexed like any other, and its cursor moves past the event. `TestATickCommitsPastAStringHoldingNUL` runs one tick over such a batch on SQLite and on Postgres (CI's service container) and asserts the progress, both stored events, and the raw XDR.
 - The stored JSON is the same on both engines. `TestInsertReplacesNULInStringValues` and its Postgres twin pin it, including a NUL in a contract map's key value, in a nested vec, and the escaped-text case.
 - The REST and GraphQL APIs return U+FFFD where the contract emitted NUL. The SDK's live tail from RPC still returns the NUL, so the two paths differ for this one character. A consumer that needs the exact bytes decodes `raw_data` or `raw_topics`.
+
+---
+
+## ADR-054: Render runs the published image from a root Blueprint, with the database wired by Render and TLS required but unverified (amends ADR-047)
+Date: 2026-11-10
+Status: accepted
+
+### Context
+
+ADR-047 left the Render definition's location open until Render's current requirements were checked, and it assumed two things about the deployed database. Render's Blueprint reference (checked 2026-11-10) says `render.yaml` lives at the repository root by default, with a custom path possible at setup. A web service can run a prebuilt public image (`runtime: image`, `image.url`) with no registry credential, and Render accepts a digest in place of a tag.
+
+Two of ADR-047's assumptions do not hold on Render:
+
+- **The certificate is self-signed.** ADR-047 says Render's managed Postgres "presents a real certificate". On the private network, Render offers TLS only with a self-signed certificate and does not support `verify-ca` or `verify-full`. The connection string `fromDatabase` provides carries no `sslmode`, so as given the indexer refuses it (ADR-031).
+- **The database URL is not dashboard-set.** ADR-047 says the database URL and the RPC URL are set in the dashboard. A Blueprint can wire the database URL from the managed instance, so nobody copies a credential by hand. The RPC URL is a public endpoint, not a secret.
+
+The indexer also reads `PULSAR_INDEXER_LISTEN_ADDR`, not Render's `PORT`.
+
+### Decision
+
+- **Placement and image.** `render.yaml` is at the repository root. The web service runs `ghcr.io/pulsar-stellar/indexer` pinned by index digest, not tag, so a moved tag cannot change what runs. A release is promoted by changing that one line.
+- **Database URL.** `PULSAR_INDEXER_DB_URL` comes from `fromDatabase` (`connectionString`, the private-network URL). No database credential appears in the file or passes through anyone's hands.
+- **TLS.** The service sets `PGSSLMODE=require`. pgx reads it when the URL omits `sslmode`, and ADR-031's structural check then sees no plaintext path and passes. This needs no code change. If the URL ever names a weaker mode, the URL wins and the indexer refuses to start, so this fails closed. Locally, against a TLS-only Postgres 16, `pg_stat_ssl` showed TLSv1.3, and with `PGSSLMODE` unset the indexer refused to start. `PULSAR_INDEXER_DB_ALLOW_INSECURE_TLS` stays unset.
+- **Port.** `PORT` and `PULSAR_INDEXER_LISTEN_ADDR` are both set to Render's default of 10000. A Blueprint value cannot reference another variable, so the two are set together.
+- **Secrets.** `PULSAR_INDEXER_ADMIN_TOKEN` is `sync: false`, entered once in the dashboard at Blueprint creation. The RPC URL, network, and bootstrap contract are committed, because none is secret. The database's `ipAllowList` is empty, which blocks every external connection.
+- **Plans.** Both start on the free plan. The comments record the cost of staying there (sleep and a 30-day database) and the paid prices.
+
+### Alternatives considered
+
+**Hand-entered database URL with `?sslmode=require` appended.** Rejected. It verifies no more than `PGSSLMODE` does, and it puts a credential through a person's clipboard. It also goes stale silently when Render rotates the password.
+
+**Read `PORT` in the indexer.** Not now. It is a config change with its own tests and an `.env.example` row, for a value the Blueprint can already state. Worth revisiting if a second platform needs it.
+
+**`verify-full` with Render's CA.** Not available. Render does not support certificate verification on internal connections.
+
+### Consequences
+
+- The database connection is encrypted but the server certificate is not verified. An attacker already inside Render's private network for this region could intercept it. That is the strongest mode Render offers, and it is accepted here.
+- Free plan: the web service sleeps after 15 minutes without inbound requests, and the poller stops while it sleeps. It resumes from its cursor on wake, so a gap shorter than RPC's seven-day retention is caught up. The free database expires after 30 days.
+- Only the write routes are rate-limited (ADR-044). The read routes and `/graphql` are public, with GraphQL's shape limits and the request deadline as their only bounds. On a 0.1-CPU database, sustained anonymous reads could starve the poller. ADR-010 asks for rate limiting from the start, so a read-side limiter is owed and tracked as an issue.
+- `docs/requirements.md` no longer says the deploy files are absent, and its Render setup line points here.

@@ -1,0 +1,86 @@
+# Render Blueprint: the indexer and its managed Postgres (ADR-010, ADR-047,
+# ADR-054).
+#
+# Render reads this file from the repository root by default. Nothing here is a
+# secret: the admin token is entered in the dashboard (sync: false), and the
+# database URL comes from Render itself (fromDatabase).
+#
+# Plans default to free, which is enough to try the deploy but not to keep it:
+# - The free web service sleeps after 15 minutes without inbound requests and
+#   takes about a minute to wake. While asleep the poller does not run. On wake
+#   it resumes from its cursor, so a gap shorter than RPC's seven-day
+#   retention is caught up and a longer one is lost.
+# - The free database expires 30 days after creation. Render deletes it after
+#   a further 14-day grace period unless it is upgraded.
+# Paid, as of 2026-11: the web service on 0.5c-512mb is $7/month and always on.
+# Postgres on 0.1c-256mb is $6/month plus $0.30/GB of storage.
+
+services:
+  - type: web
+    name: pulsar-indexer
+    runtime: image
+    plan: free
+    # Must match the database's region: the connection string below is on
+    # Render's private network, which does not span regions.
+    region: frankfurt
+    image:
+      # Image tag 0.1.1 (git tag indexer-v0.1.1), pinned by digest so a moved
+      # tag cannot change what runs (ADR-054).
+      # Public, so no registry credential is needed.
+      url: ghcr.io/pulsar-stellar/indexer@sha256:48e27bc9a2cf852427719ba8477b31431f5ab5dde68e1a27b10b2b78af9e258b
+    healthCheckPath: /health
+    envVars:
+      # The indexer reads its listen address from PULSAR_INDEXER_LISTEN_ADDR,
+      # not PORT, and a Blueprint value cannot reference another variable.
+      # PORT is therefore set to Render's default explicitly, and the listen
+      # address follows it. Change both together or Render routes nowhere.
+      - key: PORT
+        value: "10000"
+      - key: PULSAR_INDEXER_LISTEN_ADDR
+        value: ":10000"
+      - key: PULSAR_INDEXER_DB_DRIVER
+        value: postgres
+      - key: PULSAR_INDEXER_DB_URL
+        fromDatabase:
+          name: pulsar-indexer-db
+          property: connectionString
+      # Render's connection string carries no sslmode, and the indexer refuses
+      # one that could fall back to plaintext (ADR-031). pgx takes sslmode from
+      # PGSSLMODE when the URL leaves it out. Render's private network offers
+      # TLS with a self-signed certificate, so require is the strongest mode
+      # it supports. If the URL ever names a weaker mode itself, that wins and
+      # the indexer refuses to start, so this fails closed.
+      - key: PGSSLMODE
+        value: require
+      - key: PULSAR_INDEXER_DB_POOL_MAX
+        value: "5"
+      - key: PULSAR_INDEXER_DB_POOL_MIN
+        value: "1"
+      - key: PULSAR_INDEXER_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: PULSAR_INDEXER_NETWORK
+        value: testnet
+      # The pulsar-core showcase contract (v0.1.0-contracts).
+      - key: PULSAR_INDEXER_BOOTSTRAP_CONTRACTS
+        value: CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L
+      # Guards the write routes (ADR-044). Entered once in the dashboard when
+      # the Blueprint is created; never committed. Generate it locally with
+      # openssl rand -hex 32.
+      - key: PULSAR_INDEXER_ADMIN_TOKEN
+        sync: false
+      # Asks the Go runtime to keep its memory near 400 MiB, below the free
+      # plan's 512 MB. A soft target, not a cap.
+      - key: GOMEMLIMIT
+        value: 400MiB
+
+databases:
+  - name: pulsar-indexer-db
+    plan: free
+    region: frankfurt
+    # The version the migrations are proven on (ADR-047).
+    postgresMajorVersion: "16"
+    databaseName: pulsar
+    user: pulsar
+    # No external connections at all: only services on Render's private
+    # network reach it. Add an address here to connect from outside.
+    ipAllowList: []
