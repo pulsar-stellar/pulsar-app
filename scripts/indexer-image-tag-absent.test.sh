@@ -39,6 +39,9 @@ prefix='time="2026-11-10T14:00:53Z" level=fatal msg="Error parsing image name \"
 # wording, not captured from ghcr.io, which may answer a new package otherwise.
 check "missing tag" 0 1 "${prefix}reading manifest 0.1.0 in ghcr.io/pulsar-stellar/indexer: manifest unknown\""
 check "unknown repository (registry:2 wording)" 0 1 "${prefix}reading manifest 0.1.0 in ghcr.io/pulsar-stellar/indexer: name unknown: repository name not known to registry\""
+# ghcr.io, captured with skopeo 1.13.3 on 2026-11-10: an authenticated request for a
+# package that does not exist yet gets the same answer as a missing tag.
+check "package not created (ghcr.io, captured)" 0 1 "${prefix}reading manifest 0.1.0 in ghcr.io/pulsar-stellar/indexer: manifest unknown\""
 
 # The tag exists: never overwrite it.
 check "tag exists" 1 0 ""
@@ -49,6 +52,9 @@ check "dns failure" 2 1 "${prefix}pinging container registry ghcr.io: Get \\\"ht
 check "token denied (constructed)" 2 1 "${prefix}reading manifest 0.1.0 in ghcr.io/pulsar-stellar/indexer: denied: requested access to the resource is denied\""
 check "registry 5xx (constructed)" 2 1 "${prefix}reading manifest 0.1.0 in ghcr.io/pulsar-stellar/indexer: received unexpected HTTP status: 503 Service Unavailable\""
 check "silent failure" 2 1 ""
+# ghcr.io, captured: the anonymous answer for the same reference. The workflow logs in
+# first, but if login silently failed this must still stop the push.
+check "anonymous token refused (ghcr.io, captured)" 2 1 "${prefix}Requesting bearer token: invalid status code from registry 403 (Forbidden)\""
 
 # No reference is a usage error, not an answer.
 cases=$((cases + 1))
