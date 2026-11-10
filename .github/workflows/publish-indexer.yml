@@ -170,7 +170,9 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       # ADR-047: a new ghcr package can default to private, so the publish is
-      # only done once the image pulls with no credentials at all.
+      # only done once the image pulls with no credentials at all. On a first
+      # publish the fix is by hand: an organization owner allows public
+      # packages, sets this one public, and repeats the pull outside CI.
       - name: Verify an anonymous pull
         env:
           REF: ${{ env.IMAGE }}:${{ needs.build.outputs.version }}
@@ -190,5 +192,5 @@ jobs:
             sleep 10
           done
           cat "$err"
-          echo "::error::$REF does not pull anonymously. If this is the first publish, set the package to public under the organization's Packages settings (ADR-047), then re-run this job."
+          echo "::error::$REF does not pull anonymously. If this is the first publish, set the package public (ADR-047), then pull it anonymously by hand and compare the digest with $DIGEST. Do not re-run this job: the tag now exists, so the push step refuses it."
           exit 1

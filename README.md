@@ -99,6 +99,7 @@ web explorer is built and runs locally. Nothing is deployed yet.
 |---|---|
 | Workspace scaffold | complete |
 | `@pulsar-stellar/sdk` | released, `0.2.0` on npm, tag `sdk-v0.2.0` (`0.1.0` deprecated: its live reads fail on RPC v30, ADR-050) |
+| Go indexer image | published, `ghcr.io/pulsar-stellar/indexer:0.1.1`, tag `indexer-v0.1.1` (`indexer-v0.1.0` is not for use: it published no image and lacks the NUL fix, ADR-053) |
 | Go indexer, ingestion | running: polls RPC, decodes, stores events |
 | Go indexer, REST API | served: health, contracts, and events routes |
 | Go indexer, GraphQL API | served: read-only `POST /graphql` (ADR-043) |
@@ -153,7 +154,7 @@ Each is deferred by choice with a trigger recorded in the roadmap, not dropped.
 ## Related resources
 
 - npm package: [`@pulsar-stellar/sdk`](https://www.npmjs.com/package/@pulsar-stellar/sdk)
-- Release tags: [`sdk-v0.2.0`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/sdk-v0.2.0), [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
+- Release tags: [`indexer-v0.1.1`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/indexer-v0.1.1), [`sdk-v0.2.0`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/sdk-v0.2.0), [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
 - Rust contract layer: [`pulsar-stellar/pulsar-core`](https://github.com/pulsar-stellar/pulsar-core)
 - Indexer detail: [`indexer/README.md`](indexer/README.md)
 - Decision log (ADRs): [`.agent/decisions.md`](.agent/decisions.md)
