@@ -22,7 +22,7 @@ services:
     plan: free
     # Must match the database's region: the connection string below is on
     # Render's private network, which does not span regions.
-    region: oregon
+    region: frankfurt
     image:
       # Image tag 0.1.1 (git tag indexer-v0.1.1), pinned by digest so a moved
       # tag cannot change what runs (ADR-054).
@@ -76,7 +76,7 @@ services:
 databases:
   - name: pulsar-indexer-db
     plan: free
-    region: oregon
+    region: frankfurt
     # The version the migrations are proven on (ADR-047).
     postgresMajorVersion: "16"
     databaseName: pulsar
