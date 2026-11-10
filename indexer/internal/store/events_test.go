@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -92,6 +93,65 @@ func TestInsertStoresAnEventWholeAndReadsItBack(t *testing.T) {
 	if string(got.DataJSON) != string(original.DataJSON) {
 		t.Errorf("DataJSON = %s, want %s", got.DataJSON, original.DataJSON)
 	}
+}
+
+// nulEvent carries NUL in a topic string, a map key, and a nested string, which
+// a contract can emit because ScString is arbitrary bytes. The last string is
+// the six characters \u0000 as text, which must not be touched.
+func nulEvent() *models.Event {
+	event := newEvent(4430040, 40, "deposit")
+	event.TopicsJSON = json.RawMessage(`[{"type":"symbol","value":"deposit"},{"type":"string","value":"t\u0000"}]`)
+	event.DataJSON = json.RawMessage(`{"type":"map","value":[{"key":{"type":"string","value":"k\u0000"},` +
+		`"value":{"type":"vec","value":[{"type":"string","value":"a\u0000\u0000b"},{"type":"string","value":"x\\u0000y"}]}}]}`)
+	return event
+}
+
+// assertNULReplaced checks the stored form of nulEvent: every NUL in a string
+// value is U+FFFD, the escaped text is unchanged, and the raw XDR is untouched
+// (ADR-053). Both engines must store the same JSON.
+func assertNULReplaced(t *testing.T, events *store.Events) {
+	t.Helper()
+
+	page, err := events.Query(context.Background(), store.EventQuery{ContractID: showcase})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(page.Events) != 1 {
+		t.Fatalf("Query returned %d events, want 1", len(page.Events))
+	}
+	got, original := page.Events[0], nulEvent()
+
+	wantTopics := `[{"type":"symbol","value":"deposit"},{"type":"string","value":"t�"}]`
+	wantData := `{"type":"map","value":[{"key":{"type":"string","value":"k�"},` +
+		`"value":{"type":"vec","value":[{"type":"string","value":"a��b"},{"type":"string","value":"x\\u0000y"}]}}]}`
+	assertSameJSON(t, "topics_json", got.TopicsJSON, wantTopics)
+	assertSameJSON(t, "data_json", got.DataJSON, wantData)
+
+	if got.RawData != original.RawData || strings.Join(got.RawTopics, ",") != strings.Join(original.RawTopics, ",") {
+		t.Errorf("raw XDR changed: data %q topics %v, want %q %v", got.RawData, got.RawTopics, original.RawData, original.RawTopics)
+	}
+}
+
+func assertSameJSON(t *testing.T, column string, got json.RawMessage, want string) {
+	t.Helper()
+	var gotValue, wantValue any
+	if err := json.Unmarshal(got, &gotValue); err != nil {
+		t.Fatalf("%s: unmarshalling the stored value: %v", column, err)
+	}
+	if err := json.Unmarshal([]byte(want), &wantValue); err != nil {
+		t.Fatalf("%s: unmarshalling the expectation: %v", column, err)
+	}
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Errorf("%s = %s, want %s", column, got, want)
+	}
+}
+
+func TestInsertReplacesNULInStringValues(t *testing.T) {
+	t.Parallel()
+
+	events, _, _ := eventsStore(t)
+	seed(t, events, nulEvent())
+	assertNULReplaced(t, events)
 }
 
 // raw_topics is TEXT holding a JSON array on both engines, per ADR-029, so the

@@ -182,3 +182,11 @@ func TestPostgresInsertRoundTripsJSONB(t *testing.T) {
 		t.Error("the success flag round-tripped as false, want true")
 	}
 }
+
+// Postgres jsonb rejects \u0000, so before ADR-053 this insert failed and, in
+// the poller, rolled back its batch's cursor on every tick.
+func TestPostgresInsertReplacesNULInStringValues(t *testing.T) {
+	events, _ := postgresEventsStore(t)
+	seed(t, events, nulEvent())
+	assertNULReplaced(t, events)
+}

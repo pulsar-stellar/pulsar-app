@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -100,6 +101,14 @@ func (e *Events) Insert(ctx context.Context, events []*models.Event) (int, error
 		if err != nil {
 			return 0, fmt.Errorf("store: event %d: %w", i, err)
 		}
+		topicsJSON, err := storableJSON(event.TopicsJSON)
+		if err != nil {
+			return 0, fmt.Errorf("store: event %d topics_json: %w", i, err)
+		}
+		dataJSON, err := storableJSON(event.DataJSON)
+		if err != nil {
+			return 0, fmt.Errorf("store: event %d data_json: %w", i, err)
+		}
 
 		base := i * columnsPerRow
 		slots := make([]string, columnsPerRow)
@@ -114,8 +123,8 @@ func (e *Events) Insert(ctx context.Context, events []*models.Event) (int, error
 			event.TxHash,
 			event.EventIndex,
 			event.Name,
-			jsonOrNull(event.TopicsJSON),
-			jsonOrNull(event.DataJSON),
+			topicsJSON,
+			dataJSON,
 			rawTopics,
 			event.RawData,
 			// ADR-032: never bind a time.Time. SQLite stores Go's String()
@@ -373,6 +382,57 @@ func jsonOrNull(raw json.RawMessage) string {
 		return "null"
 	}
 	return string(raw)
+}
+
+// storableJSON returns a decoded column in a form both engines store alike
+// (ADR-053). A contract can emit NUL inside a string, and Postgres jsonb rejects
+// \u0000, which failed the batch and, since the cursor commits with it, stalled
+// the contract. Each NUL in a string value becomes U+FFFD; JSON with no NUL is
+// returned byte for byte. raw_topics and raw_data keep the exact XDR.
+func storableJSON(raw json.RawMessage) (string, error) {
+	text := jsonOrNull(raw)
+	if !strings.Contains(text, `\u0000`) {
+		return text, nil
+	}
+
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", fmt.Errorf("parsing decoded JSON: %w", err)
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return "", errors.New("parsing decoded JSON: trailing data after the value")
+	}
+	cleaned, err := json.Marshal(replaceNUL(value))
+	if err != nil {
+		return "", fmt.Errorf("re-encoding decoded JSON: %w", err)
+	}
+	return string(cleaned), nil
+}
+
+// replaceNUL returns a copy of a parsed JSON value with every NUL in its string
+// values replaced by U+FFFD. Object keys are left alone: in the ADR-023 taxonomy
+// they are fixed field names, and a contract map's keys are values under "key".
+func replaceNUL(value any) any {
+	switch v := value.(type) {
+	case string:
+		return strings.ReplaceAll(v, "\x00", "�")
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = replaceNUL(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = replaceNUL(item)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 func scanEvent(s scanner) (*models.Event, error) {
