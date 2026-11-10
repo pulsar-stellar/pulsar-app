@@ -115,10 +115,17 @@ jobs:
           ignore-unfixed: true
           exit-code: '1'
 
+      # The push job does not check out the repository, so the existing-tag
+      # guard travels with the archive it guards, from the same tagged commit.
+      - name: Stage the existing-tag guard
+        run: cp scripts/indexer-image-tag-absent.sh "$RUNNER_TEMP/"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: indexer-image
-          path: ${{ runner.temp }}/indexer.oci.tar
+          path: |
+            ${{ runner.temp }}/indexer.oci.tar
+            ${{ runner.temp }}/indexer-image-tag-absent.sh
           if-no-files-found: error
           retention-days: 1
 
@@ -142,7 +149,9 @@ jobs:
       # runs no third-party action. --preserve-digests pushes the archive's
       # bytes unchanged, attestations included, so the pushed digest is the
       # scanned one. A version tag that already exists is refused rather than
-      # overwritten (ADR-047: released tags are immutable).
+      # overwritten (ADR-047: released tags are immutable), and the check fails
+      # closed: a timeout or denied token stops the push instead of reading as
+      # "absent", so a re-run cannot overwrite a released version.
       - name: Push
         id: push
         env:
@@ -152,10 +161,10 @@ jobs:
         run: |
           digest="$(tar -xOf "$ARCHIVE" index.json | jq -r '.manifests[0].digest')"
           printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          if skopeo inspect --raw "docker://$REF" > /dev/null 2>&1; then
-            echo "::error::$REF already exists; version tags are never overwritten"
+          bash "$RUNNER_TEMP/indexer-image-tag-absent.sh" "$REF" || {
+            echo "::error::$REF exists or its absence could not be confirmed; nothing was pushed"
             exit 1
-          fi
+          }
           skopeo copy --all --preserve-digests "oci-archive:$ARCHIVE" "docker://$REF"
           skopeo logout ghcr.io
           echo "digest=$digest" >> "$GITHUB_OUTPUT"

@@ -42,6 +42,9 @@ jobs:
       - name: Indexer image tag self-test
         run: ./scripts/indexer-image-version.test.sh
 
+      - name: Indexer image existing-tag guard self-test
+        run: ./scripts/indexer-image-tag-absent.test.sh
+
       # The web app's type-aware lint and typecheck resolve @pulsar-stellar/sdk
       # from its built dist/*.d.ts, so the SDK must be built before the recursive
       # lint and typecheck run across the workspace.
