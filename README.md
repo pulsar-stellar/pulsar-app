@@ -177,7 +177,7 @@ surface and worked examples.
 | pnpm | 11 or newer |
 | Go | 1.23 or newer, for the indexer only |
 
-`indexer/go.mod` pins the Go 1.26.7 toolchain. A distribution Go from 1.23 acts
+`indexer/go.mod` pins the Go 1.26.11 toolchain. A distribution Go from 1.23 acts
 as a bootstrap and downloads that toolchain on first build, so an older
 distribution Go needs no manual upgrade. See ADR-030.
 
