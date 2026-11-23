@@ -64,6 +64,10 @@ type Server struct {
 	healthAt    time.Time
 	healthStats store.ContractStats
 
+	// docsURL is the documentation site GET / links to, set by WithDocsURL
+	// (ADR-057). Empty leaves the link out.
+	docsURL string
+
 	// readTimeout bounds the wall-clock time any request may spend downstream
 	// when set by WithReadTimeout. A non-positive value disables the guard, so a
 	// four-argument NewServer applies none.
@@ -109,6 +113,14 @@ func WithReadRateLimit(perSec, burst int) Option {
 			return
 		}
 		s.readLimiter = rate.NewLimiter(rate.Limit(perSec), burst)
+	}
+}
+
+// WithDocsURL sets the documentation site the root index links to (ADR-057).
+// config validates it as an absolute https URL at startup.
+func WithDocsURL(u string) Option {
+	return func(s *Server) {
+		s.docsURL = u
 	}
 }
 
