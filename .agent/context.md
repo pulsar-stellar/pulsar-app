@@ -123,3 +123,39 @@ Per sub-stack commands land with each sub-stack and this list grows as they do.
 Nowhere in this repository. `.env.example` holds placeholders and defaults that are safe to publish, and it is the only env file that is committed. Real local values go in `.env.local`, which is gitignored.
 
 In production, web values are set in the Vercel project's environment UI and indexer values in the Render service dashboard. Neither is mirrored into the repo. Anything prefixed `NEXT_PUBLIC_` reaches the browser, so a secret must never carry that prefix. If a credential does reach a commit, rotate it. Removing the commit is not sufficient.
+
+## 10. Authorship note: commits recorded under the wrong name
+
+Both maintainers' Claude sessions share one checkout folder and its agent memory, so for a while each session's commits could carry the other maintainer's name. The lists below are keyed by commit SHA. Each was checked with `git log --format='%h %an %ae %s'` on 2026-11-23. None of it has been rewritten: rewriting `main` or a release tag costs more than the wrong name does. Both sessions now commit under their own identity.
+
+**EmeditWeb's work recorded as pixels26.** EmeditWeb's session ran with a memory instruction meant for pixels26's session, and committed with `git -c user.name=pixels26 -c user.email=285364863+pixels26@users.noreply.github.com`:
+
+- `8509404` (#37)
+- `36d563b` (#40)
+- `53d2f59` (#45)
+- `d4ca277` (#46)
+- `e74ec3c` (#47)
+- `0bf912c` (#48)
+- `0bf1437` and `e16a4e4` (#49)
+- `e92ea76` (#50)
+- `5e01c69` and `330270e` (#51)
+- the tagger of `indexer-v0.1.2` and `indexer-v0.1.3`
+
+The squash commits on `main` for these PRs are authored by EmeditWeb, which is correct.
+
+**pixels26's work recorded as EmeditWeb.** pixels26's session committed under the folder's git config, which then held EmeditWeb's name and personal email:
+
+- `5191f89` (#29)
+- `0443fdd` and `94a7a81` (#30)
+- `e9b5787` (#34)
+- `bcedcf0` and `835bdff` (#36)
+- `babe3c7` in the `.github` repository
+
+The squash commits on `main` for #29, #30, #34 and #36 already show pixels26 as author, so only the PR-branch commits carry the wrong name. Those squash commits do carry an `Emeditweb` `Co-authored-by` trailer, which came from these commits.
+
+**Correctly recorded as pixels26.** These are genuinely pixels26's:
+
+- `2b7a5a6`, which moves the indexer and its Postgres to the Frankfurt region (#40)
+- the "Merge branch 'main' into ..." commits `c9cb15d`, `6f9cb5a`, `5788aaf`, `70afb86`, `696e2ad` and `32a5170`
+
+Those merges are pixels26's own commits on #32's and #33's branches (`70afb86` and `696e2ad`), so the `Co-authored-by: pixels26` lines on the #32 and #33 squash commits are correct.
