@@ -51,6 +51,7 @@ func TestRootLinksToTheServedSurface(t *testing.T) {
 	want := map[string]string{
 		"health":    "/health",
 		"openapi":   "/openapi.json",
+		"docs":      "/docs",
 		"graphql":   "/graphql",
 		"docs_site": testDocsURL,
 	}
@@ -127,6 +128,8 @@ func TestRootIsReadRateLimited(t *testing.T) {
 var getRouteProbes = map[string]string{
 	"/":                      "/",
 	"/openapi.json":          "/openapi.json",
+	"/docs":                  "/docs",
+	"/docs/assets/{file}":    "/docs/assets/init.js",
 	"/health":                "/health",
 	"/contracts":             "/contracts",
 	"/contracts/{id}":        "/contracts/" + validContractID,

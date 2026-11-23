@@ -70,6 +70,13 @@ func (s *Server) router() *chi.Mux {
 	r.With(readMiddleware...).Get("/", s.handleRoot)
 	r.With(readMiddleware...).Get("/openapi.json", s.handleOpenAPI)
 
+	// /docs renders that document with Swagger UI, served from the binary
+	// under a strict CSP (ADR-059). The page and its assets are public reads
+	// on the same bucket. docsHeaders comes first so a 429 carries the CSP too.
+	docsMiddleware := append([]func(http.Handler) http.Handler{docsHeaders}, readMiddleware...)
+	r.With(docsMiddleware...).Get("/docs", s.handleDocs)
+	r.With(docsMiddleware...).Get("/docs/assets/{file}", s.handleDocsAsset)
+
 	// The contract routes are registered flat rather than under a chi subrouter
 	// so /contracts matches the SDK's paths exactly, with no trailing slash and
 	// no redirect. List and get are public reads; register and delete are the

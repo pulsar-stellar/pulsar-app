@@ -23,6 +23,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	links := map[string]string{
 		"health":  "/health",
 		"openapi": "/openapi.json",
+		"docs":    "/docs",
 		"graphql": "/graphql",
 	}
 	if s.docsURL != "" {

@@ -136,9 +136,11 @@ alongside it; a failure carries `error.code` (the wire class) and
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/` | open | Index: name, version, and links to `/health`, `/openapi.json`, `/graphql` and the docs site (`PULSAR_INDEXER_DOCS_URL`, ADR-057). |
+| `GET` | `/` | open | Index: name, version, and links to `/health`, `/openapi.json`, `/docs`, `/graphql` and the docs site (`PULSAR_INDEXER_DOCS_URL`, ADR-057). |
 | `GET` | `/health` | open | Liveness plus `latest_ledger` and `tracked_contracts`. |
 | `GET` | `/openapi.json` | open | OpenAPI 3.0 description of this REST surface, versioned to the running build (ADR-058). |
+| `GET` | `/docs` | open | Interactive API docs (Swagger UI, bundled in the binary, strict CSP). "Try it out" works for GET only (ADR-059). |
+| `GET` | `/docs/assets/{file}` | open | The files `/docs` loads, and their licences. Any other name is a 404. |
 | `GET` | `/contracts` | open | List every tracked contract. Unpaginated: the list grows only by operator action. |
 | `POST` | `/contracts` | required | Register a contract for indexing. Idempotent on identical input (ADR-018). |
 | `GET` | `/contracts/{id}` | open | One contract's indexing metadata. |
