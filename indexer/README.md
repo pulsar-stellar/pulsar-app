@@ -31,7 +31,7 @@ config -> logger -> db.Open -> migrations -> bootstrap register
 
 ## Hosted instance
 
-A public instance runs on testnet at <https://pulsar-indexer.onrender.com>, deployed from the root
+A public instance runs on testnet at [https://pulsar-indexer.onrender.com](https://pulsar-indexer.onrender.com/health), deployed from the root
 [`render.yaml`](../render.yaml) (ADR-054). Try `GET https://pulsar-indexer.onrender.com/health` or
 `GET https://pulsar-indexer.onrender.com/contracts`. It indexes only the showcase contract, and its write routes
 need the operator's token. Reads and `/graphql` share one rate limit of 10

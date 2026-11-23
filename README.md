@@ -94,7 +94,7 @@ Sprint 6 complete, deployment underway. The SDK is released. The indexer runs as
 daemon, stores events, and serves its full HTTP API (REST and GraphQL) alongside
 the poller, with the write routes gated by authentication and rate limiting. The
 web explorer is built and runs locally. The indexer is deployed on testnet at
-<https://pulsar-indexer.onrender.com>; the explorer is not hosted yet.
+[https://pulsar-indexer.onrender.com](https://pulsar-indexer.onrender.com/health); the explorer is not hosted yet.
 
 | Artifact | State |
 |---|---|
@@ -107,7 +107,7 @@ web explorer is built and runs locally. The indexer is deployed on testnet at
 | Go indexer, write gate | live: bearer auth plus rate limiting on writes (ADR-044) |
 | Postgres schema | verified: migrations applied to a real Postgres, in CI |
 | Web explorer | built: lookup, contract detail, event list, event detail |
-| Deployment | indexer live on testnet at <https://pulsar-indexer.onrender.com> (Render, ADR-054), reads rate-limited (ADR-055); explorer not hosted yet |
+| Deployment | indexer live on testnet at [https://pulsar-indexer.onrender.com](https://pulsar-indexer.onrender.com/health) (Render, ADR-054), reads rate-limited (ADR-055); explorer not hosted yet |
 
 The daemon loads its configuration, opens the database, applies migrations,
 registers the bootstrap contracts, runs one polling loop per contract, and serves
