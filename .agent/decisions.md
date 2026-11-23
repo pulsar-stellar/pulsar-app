@@ -2196,3 +2196,29 @@ Issue #39 asked for a read bucket with its own `PULSAR_INDEXER_READ_RATE_PER_SEC
 - The explorer, once deployed, reaches the indexer from its host's servers, so all explorer users draw on this one bucket. Raise `PULSAR_INDEXER_READ_RATE_PER_SEC` on Render if real traffic needs it.
 - `/health` stays unlimited, but its one query (`SELECT COUNT(*), COALESCE(MAX(last_indexed_ledger), 0) FROM contracts`) runs at most about once per second whatever the request rate. Its `latest_ledger` can therefore be up to a second stale, which is well inside a poll interval. GraphQL's own health field is not cached; it spends from the read bucket like any other GraphQL request.
 - `render.yaml` sets neither variable, so the deployed indexer runs on the defaults.
+
+---
+
+## ADR-056: The indexer pins Go 1.26.11 for GO-2026-6859, and the release archive is kept seven days (amends ADR-030 and ADR-052)
+Date: 2026-11-23
+Status: accepted
+
+### Context
+
+ADR-030 pins the indexer's Go version in `indexer/go.mod`, and CI and the publish workflow read it from there. ADR-052 lets no release past a govulncheck finding. #32 already moved the pin to 1.26.10 for that reason.
+
+Run 42850042503, for tag `indexer-v0.1.2`, failed at govulncheck on 2026-11-23 with **GO-2026-6859**: "HTTP/1 server crash due to MaxBytesReader header race in net/http". It is found in `net/http@go1.26.10` and fixed in `go1.26.11`. The indexer serves HTTP/1 through `net/http` on a public URL, so a remote client could crash it. The live 0.1.1 on Render is affected, because it was built with 1.26.10.
+
+The same run showed a second problem. ADR-052 uploads the image archive with a one-day retention, but the push job waits for a human approval. Tag `indexer-v0.1.2` waited thirteen days, the archive expired, and approving would have failed at the download step. The gate's own delay broke the release, even before the vulnerability was found.
+
+### Decision
+
+- **Go 1.26.11.** `indexer/go.mod` declares `go 1.26.11`. CI and the publish workflow follow it through `go-version-file`. The Dockerfile builder (`golang:1.26` with `GOTOOLCHAIN=auto`) fetches that toolchain from the same line, so no other file pins a patch version. The README's toolchain line, which still said 1.26.7, now says 1.26.11.
+- **govulncheck is clean.** Locally, with `go1.26.11` and govulncheck v1.9.0, `govulncheck ./...` reports no vulnerabilities.
+- **Seven-day archive.** The archive the push job downloads is kept for seven days instead of one. That is long enough for a realistic approval delay, and short enough that an unapproved archive doesn't linger. An approval that comes later still needs a fresh run. Re-running all jobs rebuilds and rescans the same commit.
+
+### Consequences
+
+- `indexer-v0.1.2` is not for use: it published no image and failed the vulnerability gate. Its tag stays, with a pre-release note, as `indexer-v0.1.0` did. `indexer-v0.1.3` carries both ADR-055's read limit and this fix.
+- Until 0.1.3 is deployed, the live 0.1.1 stays exposed to GO-2026-6859. That is one more reason the public URL stays out of the docs until the live instance reports the new version.
+- ADR-030's rule holds: raising the pin is a one-line change in `go.mod`, recorded as an amendment.

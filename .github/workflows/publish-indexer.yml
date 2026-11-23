@@ -127,7 +127,9 @@ jobs:
             ${{ runner.temp }}/indexer.oci.tar
             ${{ runner.temp }}/indexer-image-tag-absent.sh
           if-no-files-found: error
-          retention-days: 1
+          # The push job waits for a human approval, and it fails if this
+          # archive expires first. Seven days covers a slow approval (ADR-056).
+          retention-days: 7
 
   push:
     name: push and verify

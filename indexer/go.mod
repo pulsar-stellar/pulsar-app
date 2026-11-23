@@ -1,6 +1,6 @@
 module github.com/pulsar-stellar/pulsar-app/indexer
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/creachadair/jrpc2 v1.2.0
