@@ -124,6 +124,7 @@ alongside it; a failure carries `error.code` (the wire class) and
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+| `GET` | `/` | open | Index: name, version, and links to `/health`, `/graphql` and the docs site (ADR-057). |
 | `GET` | `/health` | open | Liveness plus `latest_ledger` and `tracked_contracts`. |
 | `GET` | `/contracts` | open | List every tracked contract. Unpaginated: the list grows only by operator action. |
 | `POST` | `/contracts` | required | Register a contract for indexing. Idempotent on identical input (ADR-018). |
@@ -132,6 +133,8 @@ alongside it; a failure carries `error.code` (the wire class) and
 | `GET` | `/contracts/{id}/events` | open | That contract's events, newest first, paginated. |
 | `GET` | `/events/{id}` | open | A single event by its id. |
 | `POST` | `/graphql` | open | Read-only GraphQL over the same data (ADR-043). |
+
+Every `GET` route also answers `HEAD` with the same status and headers and no body, so uptime monitors that probe with `HEAD` work (ADR-057). `/health` is the route to monitor: it isn't rate-limited.
 
 The events list accepts `limit` (1 to 500, default 50), `cursor`, `order`
 (`asc` or `desc`, default `desc`), `from_ledger`, `to_ledger`, `name`, and
