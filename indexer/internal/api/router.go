@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/apierror"
 )
@@ -14,10 +15,32 @@ import (
 // handler so a known path hit with the wrong method answers the same way, all
 // wrapped by the surface-wide middleware chain.
 func (s *Server) Routes() http.Handler {
+	r := s.router()
+
+	// The surface-wide chain wraps the whole mux, not chi's Use stack: chi skips
+	// its Use middleware for the not-found path until a route is registered, so
+	// wrapping the mux is what applies these to every request, matched or not.
+	// RequestLogger is outermost so the status a recovered panic produces is the
+	// status it logs. SecurityHeaders rides on every response; ReadDeadline bounds
+	// the time any request may spend downstream (a no-op when unset); Recoverer
+	// sits innermost so a handler panic becomes an envelope before the outer
+	// layers see it.
+	return RequestLogger(s.log)(SecurityHeaders(ReadDeadline(s.readTimeout)(Recoverer(s.log)(r))))
+}
+
+// router builds the chi mux with every route registered and no surface-wide
+// middleware, so tests can walk the registered routes (chi.Walk).
+func (s *Server) router() *chi.Mux {
 	r := chi.NewRouter()
 
 	r.NotFound(s.handleNotFound)
 	r.MethodNotAllowed(s.handleMethodNotAllowed)
+
+	// HEAD on a GET route runs the GET handler, so uptime monitors that probe
+	// with HEAD see the real status (ADR-057, #41). net/http drops the body of a
+	// HEAD response. A route with no GET, such as POST /graphql, still answers
+	// HEAD with 404 NOT_FOUND_METHOD. chi requires Use before any route.
+	r.Use(middleware.GetHead)
 
 	r.Get("/health", s.handleHealth)
 
@@ -46,6 +69,10 @@ func (s *Server) Routes() http.Handler {
 	// no redirect. List and get are public reads; register and delete are the
 	// write surface and carry the auth (and rate-limit) middleware inline, so the
 	// GET on the same path stays open.
+	// The root index is a public read, so it spends from the read bucket like
+	// the routes it lists (ADR-055, ADR-057).
+	r.With(readMiddleware...).Get("/", s.handleRoot)
+
 	r.With(readMiddleware...).Get("/contracts", s.handleListContracts)
 	r.With(writeMiddleware...).Post("/contracts", s.handleRegisterContract)
 	r.With(readMiddleware...).Get("/contracts/{id}", s.handleGetContract)
@@ -63,15 +90,7 @@ func (s *Server) Routes() http.Handler {
 	// logging, panic recovery, and the request id.
 	r.With(readMiddleware...).Post("/graphql", s.handleGraphQL)
 
-	// The surface-wide chain wraps the whole mux, not chi's Use stack: chi skips
-	// its Use middleware for the not-found path until a route is registered, so
-	// wrapping the mux is what applies these to every request, matched or not.
-	// RequestLogger is outermost so the status a recovered panic produces is the
-	// status it logs. SecurityHeaders rides on every response; ReadDeadline bounds
-	// the time any request may spend downstream (a no-op when unset); Recoverer
-	// sits innermost so a handler panic becomes an envelope before the outer
-	// layers see it.
-	return RequestLogger(s.log)(SecurityHeaders(ReadDeadline(s.readTimeout)(Recoverer(s.log)(r))))
+	return r
 }
 
 // handleNotFound answers a request that matched no route with a 404 not_found

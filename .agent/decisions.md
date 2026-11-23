@@ -2222,3 +2222,44 @@ The same run showed a second problem. ADR-052 uploads the image archive with a o
 - `indexer-v0.1.2` is not for use: it published no image and failed the vulnerability gate. Its tag stays, with a pre-release note, as `indexer-v0.1.0` did. `indexer-v0.1.3` carries both ADR-055's read limit and this fix.
 - Until 0.1.3 is deployed, the live 0.1.1 stays exposed to GO-2026-6859. That is one more reason the public URL stays out of the docs until the live instance reports the new version.
 - ADR-030's rule holds: raising the pin is a one-line change in `go.mod`, recorded as an amendment.
+
+---
+
+## ADR-057: The indexer answers HEAD on every GET route and serves an index at GET / (first part of #42, closes #41)
+Date: 2026-11-23
+Status: accepted
+
+### Context
+
+On the Render deployment (ADR-054), `HEAD /health` answered 404 `NOT_FOUND_METHOD` (#41). chi's `r.Get` doesn't route HEAD, so HEAD fell through to the method-not-allowed handler. Many uptime monitors probe with HEAD by default, so they would report a healthy indexer as down. The bare URL also answered 404, so a visitor got no pointer to what the server serves.
+
+#42 plans a self-describing API in five PRs. This entry covers the first: HEAD and the root index. Later PRs in #42 extend it (the OpenAPI spec, `/docs`, GraphiQL).
+
+### Decision
+
+**chi's `middleware.GetHead` is mounted on the router, so HEAD on any GET route runs that route's GET handler.**
+- net/http discards a HEAD response's body, so the client gets the GET's status and headers only.
+- Mounted on the router rather than registered per route, it covers every GET route, including later ones. `TestHeadAnswersEveryGetRoute` walks the registered routes and fails on a GET route that has no HEAD probe, so a new route can't miss coverage.
+- A path with no GET, such as `POST /graphql` (ADR-043), still answers HEAD with 404 `NOT_FOUND_METHOD`.
+
+**HEAD carries the GET route's middleware.** A HEAD on a read route spends from the read bucket and runs the same store query as the GET (ADR-055). Otherwise HEAD would be an unlimited way to load the database. `/health` stays unlimited and cached, so it is the route to monitor.
+
+**`GET /` returns an index in the ADR-017 envelope:** `name`, `version`, and `links`.
+- It lists only routes that exist: `/health`, `/graphql`, and the docs site at `https://emeditweb.gitbook.io/pulsar-stellar-sdk`. `/openapi.json` and `/docs` join it in the PRs that add them, and `TestRootLinksResolve` keeps the list honest.
+- The docs site URL is an optional setting, `PULSAR_INDEXER_DOCS_URL`, defaulting to `https://emeditweb.gitbook.io/pulsar-stellar-sdk`. The site will likely move to a custom domain (`docs.pulsar-stellar.dev` is planned in `docs/requirements.md`). With a setting, that move is a config change on Render, not a new release. The value is checked at startup: it must be an absolute `https` URL with a host. `/` serves it to anyone, so a relative path, plaintext `http`, or a `javascript:` URL is refused, and the error names the variable. If no URL is configured, `/` leaves `docs_site` out rather than serving an empty link. The binary always configures one, because config supplies the default.
+- `/` reads no store, but it is a public read, so it spends from the read bucket like the routes it lists.
+
+### Alternatives considered
+
+- **`r.Head("/health", ...)` only.** Rejected. It fixes the one route #41 names, and every other GET route would still answer 404 to a monitor or a `curl -I`.
+- **Answer HEAD in `handleMethodNotAllowed`.** Rejected. That handler doesn't know which GET handler the path belongs to, so it could only answer a generic 200, and it would hide a real 404.
+- **A constant docs URL in the code.** Rejected. Moving the docs to a custom domain would then need a code change, a tag, a publish, and a `render.yaml` digest bump, all to change one link.
+- **Leave HEAD outside the read bucket.** Rejected. A HEAD on `/contracts/{id}/events` runs the full query, so it must cost what a GET costs.
+
+### Consequences
+
+- `HEAD /health` answers 200 with the JSON content type and no body, which closes #41.
+- `curl -I` works on every GET route.
+- Since #43, a HEAD on a read route reaches its handler and the store, and spends a read token. Before, it answered 404 without touching the store. The read bucket bounds both the same way.
+- One new optional variable, `PULSAR_INDEXER_DOCS_URL`, is in `.env.example`, and `verify-env-parity` covers it. `render.yaml` doesn't set it, so the deployed indexer uses the default.
+- #42's remaining PRs extend this entry's surface. Each of them adds its link to `/` and a probe to the route walk.

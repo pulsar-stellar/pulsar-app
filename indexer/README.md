@@ -84,6 +84,7 @@ publishable default.
 | `PULSAR_INDEXER_WRITE_RATE_BURST` | no | `10` | Burst the write limiter tolerates above the sustained rate. |
 | `PULSAR_INDEXER_READ_RATE_PER_SEC` | no | `10` | Sustained requests per second allowed across the public reads and `/graphql`, shared by every client (ADR-055). `/health` is not limited. |
 | `PULSAR_INDEXER_READ_RATE_BURST` | no | `20` | Burst the read limiter tolerates above the sustained rate. |
+| `PULSAR_INDEXER_DOCS_URL` | no | `https://emeditweb.gitbook.io/pulsar-stellar-sdk` | Documentation site linked from `GET /`. Must be an absolute https URL (ADR-057). |
 | `PULSAR_INDEXER_LOG_LEVEL` | no | `info` | `debug`, `info`, `warn`, or `error`. |
 | `PULSAR_INDEXER_LOG_FORMAT` | no | `json` | `json` or `text`. |
 | `PULSAR_INDEXER_READ_TIMEOUT_SEC` | no | `15` | Wall-clock ceiling on the time any request may spend downstream. |
@@ -135,6 +136,7 @@ alongside it; a failure carries `error.code` (the wire class) and
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+| `GET` | `/` | open | Index: name, version, and links to `/health`, `/graphql` and the docs site (`PULSAR_INDEXER_DOCS_URL`, ADR-057). |
 | `GET` | `/health` | open | Liveness plus `latest_ledger` and `tracked_contracts`. |
 | `GET` | `/contracts` | open | List every tracked contract. Unpaginated: the list grows only by operator action. |
 | `POST` | `/contracts` | required | Register a contract for indexing. Idempotent on identical input (ADR-018). |
@@ -143,6 +145,8 @@ alongside it; a failure carries `error.code` (the wire class) and
 | `GET` | `/contracts/{id}/events` | open | That contract's events, newest first, paginated. |
 | `GET` | `/events/{id}` | open | A single event by its id. |
 | `POST` | `/graphql` | open | Read-only GraphQL over the same data (ADR-043). |
+
+Every `GET` route also answers `HEAD` with the same status and headers and no body, so uptime monitors that probe with `HEAD` work (ADR-057). `/health` is the route to monitor: it isn't rate-limited.
 
 The events list accepts `limit` (1 to 500, default 50), `cursor`, `order`
 (`asc` or `desc`, default `desc`), `from_ledger`, `to_ledger`, `name`, and

@@ -158,6 +158,7 @@ func run() error {
 		api.WithAuthToken(cfg.AdminToken),
 		api.WithWriteRateLimit(cfg.WriteRatePerSec, cfg.WriteRateBurst),
 		api.WithReadRateLimit(cfg.ReadRatePerSec, cfg.ReadRateBurst),
+		api.WithDocsURL(cfg.DocsURL),
 		api.WithReadTimeout(cfg.ReadTimeout),
 	)
 	httpServer := newHTTPServer(cfg, srv.Routes())

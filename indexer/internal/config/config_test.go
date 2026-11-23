@@ -207,6 +207,63 @@ func TestLoadRejectsRPCURLsThatAreNotHTTP(t *testing.T) {
 	}
 }
 
+// The docs site the root index links to is optional and defaults to the
+// published GitBook site (ADR-057).
+func TestLoadDefaultsTheDocsURL(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := loadWith(t, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DocsURL != config.DefaultDocsURL {
+		t.Errorf("DocsURL = %q, want the default %q", cfg.DocsURL, config.DefaultDocsURL)
+	}
+	if config.DefaultDocsURL != "https://emeditweb.gitbook.io/pulsar-stellar-sdk" {
+		t.Errorf("config.DefaultDocsURL = %q, want the published GitBook site", config.DefaultDocsURL)
+	}
+}
+
+// A custom domain is a config change, not a release (ADR-057).
+func TestLoadReadsADocsURLOverride(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := loadWith(t, func(env map[string]string) {
+		env["PULSAR_INDEXER_DOCS_URL"] = "https://docs.pulsar-stellar.dev/sdk"
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DocsURL != "https://docs.pulsar-stellar.dev/sdk" {
+		t.Errorf("DocsURL = %q, want the override", cfg.DocsURL)
+	}
+}
+
+// The root index serves this link to anyone, so only an absolute https URL is
+// accepted. A relative, plaintext or script URL is a startup failure that names
+// the variable.
+func TestLoadRejectsADocsURLThatIsNotAbsoluteHTTPS(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{
+		"http://docs.pulsar-stellar.dev",
+		"/docs",
+		"docs.pulsar-stellar.dev",
+		"https://",
+		"javascript:alert(1)",
+		"ftp://docs.pulsar-stellar.dev",
+		"://nope",
+	} {
+		t.Run(value, func(t *testing.T) {
+			t.Parallel()
+			_, err := loadWith(t, func(env map[string]string) {
+				env["PULSAR_INDEXER_DOCS_URL"] = value
+			})
+			assertErrorNaming(t, err, "PULSAR_INDEXER_DOCS_URL")
+		})
+	}
+}
+
 func TestLoadRejectsNonPositiveAndUnparseableNumbers(t *testing.T) {
 	t.Parallel()
 
