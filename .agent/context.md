@@ -143,7 +143,7 @@ Both maintainers' Claude sessions share one checkout folder and its agent memory
 
 The squash commits on `main` for these PRs are authored by EmeditWeb, which is correct.
 
-**pixels26's work recorded as EmeditWeb.** pixels26's session committed under the folder's git config, which then held EmeditWeb's name and personal email:
+**pixels26's work recorded as EmeditWeb.** pixels26's session committed with no identity of its own set, so git used the global config (`~/.gitconfig`), which then held EmeditWeb's name and personal email. #29 and #30 were committed in this folder, which has no repo-local identity. #34 and #36 came from a separate clone, and `babe3c7` from a clone of the `.github` repository:
 
 - `5191f89` (#29)
 - `0443fdd` and `94a7a81` (#30)
@@ -159,3 +159,10 @@ The squash commits on `main` for #29, #30, #34 and #36 already show pixels26 as 
 - the "Merge branch 'main' into ..." commits `c9cb15d`, `6f9cb5a`, `5788aaf`, `70afb86`, `696e2ad` and `32a5170`
 
 Those merges are pixels26's own commits on #32's and #33's branches (`70afb86` and `696e2ad`), so the `Co-authored-by: pixels26` lines on the #32 and #33 squash commits are correct.
+
+**`Co-authored-by: pixels26` on the squash commits for #45 to #51.** GitHub adds a co-author line for each other author on a PR's branch, so these lines repeat the misattribution above. Checked with `git log --format='%h %(trailers:key=Co-authored-by,valueonly)'`:
+
+- #45 `116c061`, #47 `6c8e043`, #48 `a282c47` and #51 `bcddf9d` carry one line, `pixels26 <285364863+pixels26@users.noreply.github.com>`. It comes only from EmeditWeb's session's misattributed commits, so it's misleading.
+- #46 `165ecbd`, #49 `7ce5571` and #50 `ab6bad3` carry two lines.
+  - `pixels26 <285364863+pixels26@users.noreply.github.com>` is misleading, for the same reason.
+  - `pixels26 <emedit453@gmail.com>` is genuine. It comes from pixels26's branch-update merges: `c9cb15d` on #46, `6f9cb5a` on #49 and `5788aaf` on #50.
