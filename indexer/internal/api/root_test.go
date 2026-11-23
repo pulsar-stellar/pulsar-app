@@ -29,7 +29,7 @@ type decodedRoot struct {
 func TestRootLinksToTheServedSurface(t *testing.T) {
 	t.Parallel()
 
-	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3")
+	srv := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3", WithDocsURL(testDocsURL))
 	rr := serve(srv, http.MethodGet, "/", "")
 
 	if rr.Code != http.StatusOK {
@@ -51,7 +51,7 @@ func TestRootLinksToTheServedSurface(t *testing.T) {
 	want := map[string]string{
 		"health":    "/health",
 		"graphql":   "/graphql",
-		"docs_site": docsSiteURL,
+		"docs_site": testDocsURL,
 	}
 	if len(env.Data.Links) != len(want) {
 		t.Errorf("data.links = %v, want exactly %v", env.Data.Links, want)
@@ -61,8 +61,24 @@ func TestRootLinksToTheServedSurface(t *testing.T) {
 			t.Errorf("data.links.%s = %q, want %q", key, env.Data.Links[key], value)
 		}
 	}
-	if !strings.HasPrefix(docsSiteURL, "https://") {
-		t.Errorf("docsSiteURL = %q, want an https URL", docsSiteURL)
+}
+
+// testDocsURL stands in for the configured docs site, so the root tests prove
+// the link comes from configuration rather than a constant.
+const testDocsURL = "https://docs.example.test/pulsar"
+
+// With no docs URL configured, the index omits docs_site rather than
+// advertising an empty link. The binary always configures one (config defaults
+// it), so this is the bare NewServer a test builds.
+func TestRootOmitsTheDocsLinkWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	var env decodedRoot
+	if err := json.Unmarshal(serve(NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3"), http.MethodGet, "/", "").Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if link, ok := env.Data.Links["docs_site"]; ok {
+		t.Errorf("data.links.docs_site = %q, want it absent when no docs URL is configured", link)
 	}
 }
 

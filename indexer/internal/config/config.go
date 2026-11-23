@@ -71,12 +71,21 @@ type Config struct {
 	ReadRatePerSec int
 	ReadRateBurst  int
 
+	// DocsURL is the documentation site the root index links to (ADR-057).
+	// Optional, defaulting to DefaultDocsURL, and always an absolute https URL.
+	DocsURL string
+
 	// ReadTimeout bounds the wall-clock time any request may spend in a
 	// handler, applied surface-wide (ADR-044). It is a distinct guard from the
 	// GraphQL query-shape limits: it bounds time in the store or RPC for any
 	// request regardless of the query's shape.
 	ReadTimeout time.Duration
 }
+
+// DefaultDocsURL is the published documentation site. A deployment on a custom
+// domain overrides it with PULSAR_INDEXER_DOCS_URL, a config change rather than
+// a release (ADR-057).
+const DefaultDocsURL = "https://emeditweb.gitbook.io/pulsar-stellar-sdk"
 
 // Getenv reads one environment variable, returning the empty string when it is
 // unset. Load takes one so tests can supply an environment without mutating the
@@ -149,6 +158,12 @@ func Load(getenv Getenv) (Config, error) {
 		return Config{}, err
 	}
 	cfg.RPCURL = rpcURL
+
+	docsURL := withDefault(getenv, "PULSAR_INDEXER_DOCS_URL", DefaultDocsURL)
+	if err := httpsURL("PULSAR_INDEXER_DOCS_URL", docsURL); err != nil {
+		return Config{}, err
+	}
+	cfg.DocsURL = docsURL
 
 	network, err := required(getenv, "PULSAR_INDEXER_NETWORK")
 	if err != nil {
@@ -257,6 +272,23 @@ func httpURL(name, value string) error {
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("%s has scheme %q, but only http and https are supported", name, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s has no host", name)
+	}
+	return nil
+}
+
+// httpsURL accepts only an absolute https URL with a host. It guards a link the
+// indexer serves to anyone, so a relative path, plaintext http, or a scheme
+// like javascript: is refused at startup.
+func httpsURL(name, value string) error {
+	u, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("%s is not a valid URL: %w", name, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("%s must be an absolute https URL, got scheme %q", name, u.Scheme)
 	}
 	if u.Host == "" {
 		return fmt.Errorf("%s has no host", name)

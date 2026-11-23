@@ -2246,13 +2246,14 @@ On the Render deployment (ADR-054), `HEAD /health` answered 404 `NOT_FOUND_METHO
 
 **`GET /` returns an index in the ADR-017 envelope:** `name`, `version`, and `links`.
 - It lists only routes that exist: `/health`, `/graphql`, and the docs site at `https://emeditweb.gitbook.io/pulsar-stellar-sdk`. `/openapi.json` and `/docs` join it in the PRs that add them, and `TestRootLinksResolve` keeps the list honest.
-- The docs site URL is a constant, not a setting. It is one public URL for every deployment, and a setting would only add an `.env.example` row nobody changes.
+- The docs site URL is an optional setting, `PULSAR_INDEXER_DOCS_URL`, defaulting to `https://emeditweb.gitbook.io/pulsar-stellar-sdk`. The site will likely move to a custom domain (`docs.pulsar-stellar.dev` is planned in `docs/requirements.md`). With a setting, that move is a config change on Render, not a new release. The value is checked at startup: it must be an absolute `https` URL with a host. `/` serves it to anyone, so a relative path, plaintext `http`, or a `javascript:` URL is refused, and the error names the variable. If no URL is configured, `/` leaves `docs_site` out rather than serving an empty link. The binary always configures one, because config supplies the default.
 - `/` reads no store, but it is a public read, so it spends from the read bucket like the routes it lists.
 
 ### Alternatives considered
 
 - **`r.Head("/health", ...)` only.** Rejected. It fixes the one route #41 names, and every other GET route would still answer 404 to a monitor or a `curl -I`.
 - **Answer HEAD in `handleMethodNotAllowed`.** Rejected. That handler doesn't know which GET handler the path belongs to, so it could only answer a generic 200, and it would hide a real 404.
+- **A constant docs URL in the code.** Rejected. Moving the docs to a custom domain would then need a code change, a tag, a publish, and a `render.yaml` digest bump, all to change one link.
 - **Leave HEAD outside the read bucket.** Rejected. A HEAD on `/contracts/{id}/events` runs the full query, so it must cost what a GET costs.
 
 ### Consequences
@@ -2260,4 +2261,5 @@ On the Render deployment (ADR-054), `HEAD /health` answered 404 `NOT_FOUND_METHO
 - `HEAD /health` answers 200 with the JSON content type and no body, which closes #41.
 - `curl -I` works on every GET route.
 - Since #43, a HEAD on a read route reaches its handler and the store, and spends a read token. Before, it answered 404 without touching the store. The read bucket bounds both the same way.
+- One new optional variable, `PULSAR_INDEXER_DOCS_URL`, is in `.env.example`, and `verify-env-parity` covers it. `render.yaml` doesn't set it, so the deployed indexer uses the default.
 - #42's remaining PRs extend this entry's surface. Each of them adds its link to `/` and a probe to the route walk.
