@@ -177,12 +177,18 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 
 	limited := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3", WithReadRateLimit(1, 1))
 
+	// The document is built once per server; this one's build has already
+	// failed, which drives handleOpenAPI's 500 path.
+	brokenSpec := NewServer(nil, fakeContracts{}, fakeEvents{}, "1.2.3")
+	brokenSpec.openAPIOnce.Do(func() { brokenSpec.openAPIErr = errorString("bad document") })
+
 	contract := "/contracts/" + validContractID
 	cases := []shapeCase{
 		{"index", full, http.MethodGet, "/", "", false, false, 200},
 		{"health", full, http.MethodGet, "/health", "", false, false, 200},
 		{"health store down", failing, http.MethodGet, "/health", "", false, false, 500},
 		{"openapi", full, http.MethodGet, "/openapi.json", "", false, false, 200},
+		{"openapi build failed", brokenSpec, http.MethodGet, "/openapi.json", "", false, false, 500},
 		{"list contracts", full, http.MethodGet, "/contracts", "", false, false, 200},
 		{"list contracts store down", failing, http.MethodGet, "/contracts", "", false, false, 500},
 		{"list contracts rate limited", limited, http.MethodGet, "/contracts", "", false, true, 429},

@@ -2260,7 +2260,7 @@ On the Render deployment (ADR-054), `HEAD /health` answered 404 `NOT_FOUND_METHO
 
 - `HEAD /health` answers 200 with the JSON content type and no body, which closes #41.
 - `curl -I` works on every GET route.
-- With this change, a HEAD on a read route reaches its handler and the store, and spends a read token. Before, it answered 404 without touching the store. The read bucket bounds both the same way.
+- Since #43, a HEAD on a read route reaches its handler and the store, and spends a read token. Before, it answered 404 without touching the store. The read bucket bounds both the same way.
 - One new optional variable, `PULSAR_INDEXER_DOCS_URL`, is in `.env.example`, and `verify-env-parity` covers it. `render.yaml` doesn't set it, so the deployed indexer uses the default.
 - #42's remaining PRs extend this entry's surface. Each of them adds its link to `/` and a probe to the route walk.
 
@@ -2301,5 +2301,6 @@ Status: accepted
 ### Consequences
 
 - A change to a handler's response, a new route, or a new status now needs a matching change to `openapi.json`, or CI fails.
+- ADR-057's consequence beginning "Since #43" is misworded. HEAD reaches the read handlers and spends a read token because of ADR-057's own change (mounting `GetHead`), not because of #43. Its text stands unedited, because the log is append-only. Read it as "With this change".
 - PR 3 of #42 renders this document at `/docs`.
 - `go.mod` gains one direct requirement and four indirect ones, all test-only. govulncheck reports nothing.
