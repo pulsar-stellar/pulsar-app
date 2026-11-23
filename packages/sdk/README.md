@@ -22,11 +22,13 @@ npm install @pulsar-stellar/sdk @stellar/stellar-sdk
 import { PulsarClient, liveEventStream } from '@pulsar-stellar/sdk';
 
 const client = new PulsarClient({
-  indexerUrl: 'https://indexer.example.com',
+  indexerUrl: 'https://pulsar-indexer.onrender.com',
   rpcUrl: 'https://soroban-testnet.stellar.org',
   network: 'testnet',
 });
 ```
+
+`https://pulsar-indexer.onrender.com` is a public Pulsar indexer on testnet, so the read examples below work without running anything. It indexes only the showcase contract (`CDNWTVUD...YWI5L`); registering a contract needs the operator's token. Reads share a rate limit (10 requests per second, burst 20), and a request over it gets a `429`. It runs on a free plan that sleeps after 15 minutes idle, so the first request after a quiet spell can take about a minute. For your own contracts, run your own indexer (see [`indexer/README.md`](https://github.com/pulsar-stellar/pulsar-app/blob/main/indexer/README.md)).
 
 ### Read event history from the indexer
 
@@ -72,7 +74,7 @@ Registration is a write route. A Pulsar indexer gates its writes behind a static
 
 ```ts
 const client = new PulsarClient({
-  indexerUrl: 'https://indexer.example.com',
+  indexerUrl: 'https://indexer.example.com', // your own indexer
   adminToken: process.env.PULSAR_INDEXER_ADMIN_TOKEN, // at least 16 characters
 });
 

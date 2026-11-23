@@ -29,6 +29,17 @@ config -> logger -> db.Open -> migrations -> bootstrap register
                                                                       writes gated)
 ```
 
+## Hosted instance
+
+A public instance runs on testnet at <https://pulsar-indexer.onrender.com>, deployed from the root
+[`render.yaml`](../render.yaml) (ADR-054). Try `GET https://pulsar-indexer.onrender.com/health` or
+`GET https://pulsar-indexer.onrender.com/contracts`. It indexes only the showcase contract, and its write routes
+need the operator's token. Reads and `/graphql` share one rate limit of 10
+requests per second with a burst of 20 (ADR-055). It runs on a free plan that
+sleeps after 15 minutes without requests, so the first request after a quiet
+spell can take about a minute while it wakes and catches up. To index your own
+contracts, run it yourself as below.
+
 ## Quick start
 
 ```sh
