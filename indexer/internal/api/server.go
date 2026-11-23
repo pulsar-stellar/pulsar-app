@@ -64,6 +64,12 @@ type Server struct {
 	healthAt    time.Time
 	healthStats store.ContractStats
 
+	// openAPIOnce builds the versioned OpenAPI document on first request;
+	// openAPIDoc and openAPIErr hold the result (ADR-058).
+	openAPIOnce sync.Once
+	openAPIDoc  []byte
+	openAPIErr  error
+
 	// docsURL is the documentation site GET / links to, set by WithDocsURL
 	// (ADR-057). Empty leaves the link out.
 	docsURL string

@@ -50,6 +50,7 @@ func TestRootLinksToTheServedSurface(t *testing.T) {
 
 	want := map[string]string{
 		"health":    "/health",
+		"openapi":   "/openapi.json",
 		"graphql":   "/graphql",
 		"docs_site": testDocsURL,
 	}
@@ -125,6 +126,7 @@ func TestRootIsReadRateLimited(t *testing.T) {
 // route missing here, so a new route cannot ship without HEAD coverage.
 var getRouteProbes = map[string]string{
 	"/":                      "/",
+	"/openapi.json":          "/openapi.json",
 	"/health":                "/health",
 	"/contracts":             "/contracts",
 	"/contracts/{id}":        "/contracts/" + validContractID,

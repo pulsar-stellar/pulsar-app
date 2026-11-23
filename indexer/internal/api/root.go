@@ -22,6 +22,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 	start := time.Now()
 	links := map[string]string{
 		"health":  "/health",
+		"openapi": "/openapi.json",
 		"graphql": "/graphql",
 	}
 	if s.docsURL != "" {

@@ -1,0 +1,592 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Pulsar indexer API",
+    "version": "dev",
+    "description": "Stored, decoded Soroban contract events, served past RPC's seven-day retention window. Every JSON response except this document and POST /graphql uses one envelope: a success carries `data` (with `next_cursor` on a paginated route) and `meta.took_ms`; a failure carries `error.code` (the class) and `error.details.code` (the catalog code). Every GET route also answers HEAD with the same status and headers and no body. Reads and POST /graphql share one rate limit; GET /health is never limited. The two write routes need a bearer token.",
+    "license": {
+      "name": "Apache-2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    }
+  },
+  "tags": [
+    { "name": "meta", "description": "What the server is and whether it is up" },
+    { "name": "contracts", "description": "The contracts the indexer tracks" },
+    { "name": "events", "description": "Stored, decoded contract events" },
+    { "name": "graphql", "description": "Read-only GraphQL over the same data" }
+  ],
+  "paths": {
+    "/": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getIndex",
+        "summary": "Index of the served surface",
+        "description": "The server's name and version, and links to its routes and the documentation site. `docs_site` is present when a docs URL is configured.",
+        "responses": {
+          "200": {
+            "description": "The index",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": { "data": { "$ref": "#/components/schemas/Index" } }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getHealth",
+        "summary": "Liveness and indexing progress",
+        "description": "Reads the store, so a 200 means the indexer can answer. Never rate-limited; the store read is cached for one second, and a failure is not cached.",
+        "responses": {
+          "200": {
+            "description": "The indexer is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": { "data": { "$ref": "#/components/schemas/Health" } }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getOpenAPI",
+        "summary": "This document",
+        "description": "The OpenAPI description of the REST surface, with `info.version` set to the running build. Served as is, not in the envelope.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "required": ["openapi", "info", "paths"] }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/contracts": {
+      "get": {
+        "tags": ["contracts"],
+        "operationId": "listContracts",
+        "summary": "List every tracked contract",
+        "description": "Oldest first. Unpaginated: the list grows only by operator action.",
+        "responses": {
+          "200": {
+            "description": "The tracked contracts; an empty list when none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": ["items"],
+                          "properties": {
+                            "items": { "type": "array", "items": { "$ref": "#/components/schemas/Contract" } }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "post": {
+        "tags": ["contracts"],
+        "operationId": "registerContract",
+        "summary": "Register a contract for indexing",
+        "description": "Idempotent: registering a tracked contract returns its existing record.",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["contract_id"],
+                "properties": { "contract_id": { "$ref": "#/components/schemas/ContractID" } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": { "data": { "$ref": "#/components/schemas/Contract" } }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Validation" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/contracts/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ContractIDPath" }],
+      "get": {
+        "tags": ["contracts"],
+        "operationId": "getContract",
+        "summary": "One contract's indexing metadata",
+        "responses": {
+          "200": {
+            "description": "The contract",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": { "data": { "$ref": "#/components/schemas/Contract" } }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Validation" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      },
+      "delete": {
+        "tags": ["contracts"],
+        "operationId": "deleteContract",
+        "summary": "Stop tracking a contract",
+        "description": "Cascades: every stored event under the contract is deleted with it.",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "204": { "description": "Deleted" },
+          "400": { "$ref": "#/components/responses/Validation" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/contracts/{id}/events": {
+      "parameters": [{ "$ref": "#/components/parameters/ContractIDPath" }],
+      "get": {
+        "tags": ["events"],
+        "operationId": "listEvents",
+        "summary": "A contract's events, paginated",
+        "description": "A tracked contract with no matching events is an empty page, not a 404. Follow `next_cursor` until it is absent.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 500, "default": 50 }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "The `next_cursor` of the previous page",
+            "schema": { "type": "string", "pattern": "^[0-9]+$" }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" }
+          },
+          {
+            "name": "from_ledger",
+            "in": "query",
+            "description": "Lowest ledger, inclusive",
+            "schema": { "type": "integer", "format": "int64", "minimum": 0 }
+          },
+          {
+            "name": "to_ledger",
+            "in": "query",
+            "description": "Highest ledger, inclusive; not below from_ledger",
+            "schema": { "type": "integer", "format": "int64", "minimum": 0 }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Exact event name",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "topic_contains",
+            "in": "query",
+            "description": "Substring of the decoded topics",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "required": ["items"],
+                          "properties": {
+                            "items": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } }
+                          }
+                        },
+                        "next_cursor": {
+                          "type": "string",
+                          "description": "Absent on the last page"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Validation" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/events/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "The event's id, a string of digits",
+          "schema": { "type": "string", "pattern": "^[0-9]+$" }
+        }
+      ],
+      "get": {
+        "tags": ["events"],
+        "operationId": "getEvent",
+        "summary": "One event by its id",
+        "responses": {
+          "200": {
+            "description": "The event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    { "$ref": "#/components/schemas/SuccessEnvelope" },
+                    {
+                      "type": "object",
+                      "properties": { "data": { "$ref": "#/components/schemas/Event" } }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Validation" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/graphql": {
+      "post": {
+        "tags": ["graphql"],
+        "operationId": "graphql",
+        "summary": "Read-only GraphQL",
+        "description": "The schema is introspectable. Depth 10, query length 8192, and a 64 KiB body cap apply. Responses use GraphQL's `{data, errors}` shape, not the envelope; each error carries its catalog code in `extensions.code`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                  "query": { "type": "string" },
+                  "operationName": { "type": "string" },
+                  "variables": { "type": "object", "additionalProperties": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Executed; `errors` is present when a field failed",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/GraphQLResponse" } }
+            }
+          },
+          "400": {
+            "description": "The body was too large, malformed, or had no query",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/GraphQLResponse" } }
+            }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The operator's admin token. Only the two write routes take it."
+      }
+    },
+    "parameters": {
+      "ContractIDPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "A Soroban contract ID",
+        "schema": { "$ref": "#/components/schemas/ContractID" }
+      }
+    },
+    "responses": {
+      "Validation": {
+        "description": "A parameter or the body failed validation (class `validation`)",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "NotFound": {
+        "description": "No such contract or event (class `not_found`)",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing or wrong bearer token (class `unauthorized`)",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "RateLimited": {
+        "description": "The surface's rate limit is spent (class `rate_limited`, code `RATE_LIMITED`)",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      },
+      "Internal": {
+        "description": "The indexer failed (class `internal`); details are logged, never sent",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorEnvelope" } } }
+      }
+    },
+    "schemas": {
+      "ContractID": {
+        "type": "string",
+        "pattern": "^C[A-Z2-7]{55}$",
+        "example": "CDNWTVUDKCCGW7GOC6SBLUFXXUCD2YDHWRDUSXZ6CYBQKQWLCUYYWI5L"
+      },
+      "SuccessEnvelope": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": {},
+          "next_cursor": { "type": "string" },
+          "meta": {
+            "type": "object",
+            "required": ["took_ms"],
+            "properties": { "took_ms": { "type": "number", "minimum": 0 } }
+          }
+        }
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message", "details"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["validation", "not_found", "rate_limited", "unauthorized", "internal"]
+              },
+              "message": { "type": "string" },
+              "details": {
+                "type": "object",
+                "required": ["code"],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "enum": [
+                      "INTERNAL_PANIC",
+                      "INTERNAL_STORE",
+                      "NOT_FOUND_ROUTE",
+                      "NOT_FOUND_METHOD",
+                      "NOT_FOUND_CONTRACT",
+                      "NOT_FOUND_EVENT",
+                      "VALIDATION_CONTRACT_ID",
+                      "VALIDATION_BODY",
+                      "VALIDATION_LIMIT",
+                      "VALIDATION_CURSOR",
+                      "VALIDATION_ORDER",
+                      "VALIDATION_LEDGER_RANGE",
+                      "VALIDATION_FILTER",
+                      "VALIDATION_EVENT_ID",
+                      "UNAUTHORIZED",
+                      "RATE_LIMITED"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "Index": {
+        "type": "object",
+        "required": ["name", "version", "links"],
+        "properties": {
+          "name": { "type": "string", "example": "pulsar-indexer" },
+          "version": { "type": "string" },
+          "links": {
+            "type": "object",
+            "required": ["health", "openapi", "graphql"],
+            "properties": {
+              "health": { "type": "string" },
+              "openapi": { "type": "string" },
+              "graphql": { "type": "string" },
+              "docs_site": { "type": "string", "format": "uri" }
+            }
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": ["ok", "version", "latest_ledger", "tracked_contracts"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "version": { "type": "string" },
+          "latest_ledger": { "type": "integer", "format": "int64", "minimum": 0 },
+          "tracked_contracts": { "type": "integer", "minimum": 0 }
+        }
+      },
+      "Contract": {
+        "type": "object",
+        "required": ["id", "added_at", "first_indexed_ledger", "last_indexed_ledger", "status"],
+        "properties": {
+          "id": { "$ref": "#/components/schemas/ContractID" },
+          "added_at": { "type": "string", "format": "date-time" },
+          "first_indexed_ledger": {
+            "type": "integer",
+            "format": "int64",
+            "nullable": true,
+            "description": "Null until the first poll"
+          },
+          "last_indexed_ledger": { "type": "integer", "format": "int64" },
+          "status": { "type": "string", "enum": ["active", "paused", "error"] }
+        }
+      },
+      "DecodedValue": {
+        "type": "object",
+        "required": ["type"],
+        "description": "A decoded Soroban value: `type` names the variant, `value` carries it. Large integers are strings.",
+        "properties": {
+          "type": { "type": "string" },
+          "value": {}
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": [
+          "id",
+          "contract_id",
+          "ledger",
+          "tx_hash",
+          "event_index",
+          "name",
+          "topics_json",
+          "data_json",
+          "raw_topics",
+          "raw_data",
+          "emitted_at",
+          "in_successful_contract_call"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9]+$",
+            "description": "A string, because the id can exceed a JSON number's safe range"
+          },
+          "contract_id": { "$ref": "#/components/schemas/ContractID" },
+          "ledger": { "type": "integer", "format": "int64" },
+          "tx_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "event_index": { "type": "integer", "format": "int64", "minimum": 0 },
+          "name": { "type": "string" },
+          "topics_json": { "type": "array", "items": { "$ref": "#/components/schemas/DecodedValue" } },
+          "data_json": { "$ref": "#/components/schemas/DecodedValue" },
+          "raw_topics": {
+            "type": "array",
+            "items": { "type": "string", "format": "byte" },
+            "description": "Each topic's XDR, base64"
+          },
+          "raw_data": { "type": "string", "format": "byte", "description": "The data's XDR, base64" },
+          "emitted_at": { "type": "string", "format": "date-time" },
+          "in_successful_contract_call": { "type": "boolean" }
+        }
+      },
+      "GraphQLResponse": {
+        "type": "object",
+        "properties": {
+          "data": { "nullable": true },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["message"],
+              "properties": {
+                "message": { "type": "string" },
+                "extensions": { "type": "object", "additionalProperties": true }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
