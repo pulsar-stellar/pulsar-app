@@ -123,3 +123,12 @@ Per sub-stack commands land with each sub-stack and this list grows as they do.
 Nowhere in this repository. `.env.example` holds placeholders and defaults that are safe to publish, and it is the only env file that is committed. Real local values go in `.env.local`, which is gitignored.
 
 In production, web values are set in the Vercel project's environment UI and indexer values in the Render service dashboard. Neither is mirrored into the repo. Anything prefixed `NEXT_PUBLIC_` reaches the browser, so a secret must never carry that prefix. If a credential does reach a commit, rotate it. Removing the commit is not sufficient.
+
+## 10. Authorship note: pixels26's name on EmeditWeb's work
+
+Some history carries pixels26's name although EmeditWeb's session made it. The two maintainers' Claude sessions share this folder's agent memory. An instruction meant for pixels26's session, to commit as pixels26, was picked up by EmeditWeb's session, which then passed `git -c user.name=pixels26 -c user.email=285364863+pixels26@users.noreply.github.com` on its commits from 2026-11-10 to 2026-11-23.
+
+- **PR commits #37 to #51** are authored and committed as pixels26. The exception is #43, which is pixels26's own PR. The squash commits on `main` are authored by EmeditWeb, but most carry a `Co-authored-by: pixels26` trailer carried over from those PR commits.
+- **The tags `indexer-v0.1.2` and `indexer-v0.1.3`** have pixels26 as their tagger.
+
+None of it has been rewritten. Rewriting `main` or a release tag costs more than the wrong name does, so it stays as a known inaccuracy. EmeditWeb's session now commits with its own identity and no override.
