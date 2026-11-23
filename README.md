@@ -93,20 +93,21 @@ file would apply cleanly on both and silently corrupt one. See ADR-029.
 Sprint 6 complete, deployment underway. The SDK is released. The indexer runs as a
 daemon, stores events, and serves its full HTTP API (REST and GraphQL) alongside
 the poller, with the write routes gated by authentication and rate limiting. The
-web explorer is built and runs locally. Nothing is deployed yet.
+web explorer is built and runs locally. The indexer is deployed on testnet at
+<https://pulsar-indexer.onrender.com>; the explorer is not hosted yet.
 
 | Artifact | State |
 |---|---|
 | Workspace scaffold | complete |
 | `@pulsar-stellar/sdk` | released, `0.2.0` on npm, tag `sdk-v0.2.0` (`0.1.0` deprecated: its live reads fail on RPC v30, ADR-050) |
-| Go indexer image | published, `ghcr.io/pulsar-stellar/indexer:0.1.1`, tag `indexer-v0.1.1` (`indexer-v0.1.0` is not for use: it published no image and lacks the NUL fix, ADR-053) |
+| Go indexer image | published, `ghcr.io/pulsar-stellar/indexer:0.1.3`, tag `indexer-v0.1.3` (`indexer-v0.1.0` and `indexer-v0.1.2` are not for use: neither published an image) |
 | Go indexer, ingestion | running: polls RPC, decodes, stores events |
 | Go indexer, REST API | served: health, contracts, and events routes |
 | Go indexer, GraphQL API | served: read-only `POST /graphql` (ADR-043) |
 | Go indexer, write gate | live: bearer auth plus rate limiting on writes (ADR-044) |
 | Postgres schema | verified: migrations applied to a real Postgres, in CI |
 | Web explorer | built: lookup, contract detail, event list, event detail |
-| Deployment | in progress: indexer Dockerfile and local compose stack merged (ADR-047); no published image, no hosted instance |
+| Deployment | indexer live on testnet at <https://pulsar-indexer.onrender.com> (Render, ADR-054), reads rate-limited (ADR-055); explorer not hosted yet |
 
 The daemon loads its configuration, opens the database, applies migrations,
 registers the bootstrap contracts, runs one polling loop per contract, and serves
@@ -154,7 +155,7 @@ Each is deferred by choice with a trigger recorded in the roadmap, not dropped.
 ## Related resources
 
 - npm package: [`@pulsar-stellar/sdk`](https://www.npmjs.com/package/@pulsar-stellar/sdk)
-- Release tags: [`indexer-v0.1.1`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/indexer-v0.1.1), [`sdk-v0.2.0`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/sdk-v0.2.0), [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
+- Release tags: [`indexer-v0.1.3`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/indexer-v0.1.3), [`sdk-v0.2.0`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/sdk-v0.2.0), [`v0.1.0-app`](https://github.com/pulsar-stellar/pulsar-app/releases/tag/v0.1.0-app)
 - Rust contract layer: [`pulsar-stellar/pulsar-core`](https://github.com/pulsar-stellar/pulsar-core)
 - Indexer detail: [`indexer/README.md`](indexer/README.md)
 - Decision log (ADRs): [`.agent/decisions.md`](.agent/decisions.md)
