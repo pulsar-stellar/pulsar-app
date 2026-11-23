@@ -90,6 +90,51 @@
         }
       }
     },
+    "/docs": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getDocs",
+        "summary": "Interactive API docs",
+        "description": "Swagger UI for this document, served from the binary with no third-party requests. \"Try it out\" works for GET operations only. The page and its assets carry a strict Content-Security-Policy and `Referrer-Policy: no-referrer`.",
+        "responses": {
+          "200": {
+            "description": "The docs page",
+            "content": { "text/html": { "schema": { "type": "string" } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
+    "/docs/assets/{file}": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getDocsAsset",
+        "summary": "A file the docs page loads",
+        "description": "Only the page's own files are served: `swagger-ui-bundle.js`, `swagger-ui.css`, `init.js`, and the licence texts `LICENSE`, `NOTICE` and `swagger-ui-bundle.js.LICENSE.txt`. Any other name is a 404.",
+        "parameters": [
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "text/javascript": { "schema": { "type": "string" } },
+              "text/css": { "schema": { "type": "string" } },
+              "text/plain": { "schema": { "type": "string" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": { "$ref": "#/components/responses/Internal" }
+        }
+      }
+    },
     "/contracts": {
       "get": {
         "tags": ["contracts"],
@@ -486,10 +531,11 @@
           "version": { "type": "string" },
           "links": {
             "type": "object",
-            "required": ["health", "openapi", "graphql"],
+            "required": ["health", "openapi", "docs", "graphql"],
             "properties": {
               "health": { "type": "string" },
               "openapi": { "type": "string" },
+              "docs": { "type": "string" },
               "graphql": { "type": "string" },
               "docs_site": { "type": "string", "format": "uri" }
             }

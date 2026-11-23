@@ -21,6 +21,14 @@ import (
 	"github.com/pulsar-stellar/pulsar-app/indexer/internal/store"
 )
 
+// The docs page and its assets are HTML, CSS and JavaScript. kin-openapi reads
+// those response bodies as plain text, so the schema check sees a string.
+func init() {
+	for _, ct := range []string{"text/html", "text/css", "text/javascript"} {
+		openapi3filter.RegisterBodyDecoder(ct, openapi3filter.PlainBodyDecoder)
+	}
+}
+
 // loadSpec parses and validates the embedded OpenAPI document. The validator
 // is a test-only dependency (ADR-058); the binary serves the bytes as written.
 func loadSpec(t *testing.T) *openapi3.T {
@@ -189,6 +197,11 @@ func TestResponsesMatchTheSpec(t *testing.T) {
 		{"health store down", failing, http.MethodGet, "/health", "", false, false, 500},
 		{"openapi", full, http.MethodGet, "/openapi.json", "", false, false, 200},
 		{"openapi build failed", brokenSpec, http.MethodGet, "/openapi.json", "", false, false, 500},
+		{"docs page", full, http.MethodGet, "/docs", "", false, false, 200},
+		{"docs script", full, http.MethodGet, "/docs/assets/init.js", "", false, false, 200},
+		{"docs stylesheet", full, http.MethodGet, "/docs/assets/swagger-ui.css", "", false, false, 200},
+		{"docs licence", full, http.MethodGet, "/docs/assets/LICENSE", "", false, false, 200},
+		{"docs unknown asset", full, http.MethodGet, "/docs/assets/nope.js", "", false, false, 404},
 		{"list contracts", full, http.MethodGet, "/contracts", "", false, false, 200},
 		{"list contracts store down", failing, http.MethodGet, "/contracts", "", false, false, 500},
 		{"list contracts rate limited", limited, http.MethodGet, "/contracts", "", false, true, 429},

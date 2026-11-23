@@ -2304,3 +2304,69 @@ Status: accepted
 - ADR-057's consequence beginning "Since #43" is misworded. HEAD reaches the read handlers and spends a read token because of ADR-057's own change (mounting `GetHead`), not because of #43. Its text stands unedited, because the log is append-only. Read it as "With this change".
 - PR 3 of #42 renders this document at `/docs`.
 - `go.mod` gains one direct requirement and four indirect ones, all test-only. govulncheck reports nothing.
+
+---
+
+## ADR-059: GET /docs serves a vendored, checksummed Swagger UI under a strict CSP, with "Try it out" for GET only (third part of #42)
+Date: 2026-11-23
+Status: accepted
+
+### Context
+
+ADR-058 publishes the REST surface as `/openapi.json`. #42's third PR renders it as an interactive page. The page runs on a public URL, so it must not load code from a third party at runtime, and it must not invite anyone to paste the admin token (ADR-044) into a form. The indexer image is built `FROM scratch` (ADR-008), so whatever the page needs has to be inside the binary.
+
+### Decision
+
+**Swagger UI, vendored and embedded.** `scripts/vendor-swagger-ui.sh <version>` fetches `swagger-ui-dist` from the npm registry, over https only. It refuses the tarball unless its sha512 matches the integrity the registry publishes. It extracts without restoring owners or permissions, refuses any entry that isn't a regular file (a symlink could otherwise copy a local file into the repository), and copies out only what the page needs into `indexer/internal/api/docsui/vendor/`:
+- `swagger-ui-bundle.js` and `swagger-ui.css`
+- the licence texts that must travel with them: `LICENSE`, `NOTICE` (Apache-2.0 section 4(d) requires redistributing it), and `swagger-ui-bundle.js.LICENSE.txt` (the licences of the third-party code compiled into the bundle)
+
+The script writes `VERSION` and `SHA256SUMS` beside them. `go:embed` puts the directory in the binary. `TestVendoredAssetsMatchSHA256SUMS` fails if any embedded vendored file stops matching `SHA256SUMS`, or if a file is embedded but not listed.
+
+The pinned release is **5.34.1** (2026-10-30). The newest, 5.36.0, came out the same day as this change, and a release that new has had no time for problems to surface.
+
+**No inline code.** The page (`docsui/index.html`) loads the stylesheet, the bundle, and `docsui/init.js`, all from `/docs/assets/`. A test fails if the page gains an inline script, an inline style, a `style` attribute, an event-handler attribute, or a `javascript:` URL. The initialiser:
+- loads `/openapi.json` from the same origin, with `queryConfigEnabled: false`, so no query parameter can point the page at another spec
+- sets `supportedSubmitMethods: ["get"]`
+- sets `validatorUrl: null`, so the page never loads the validator.swagger.io badge
+- sets `deepLinking: false`, so nothing in the URL changes what the page shows
+- hides the Authorize button and the per-operation lock icons with a small plugin. Only the write routes take the token, and they can't be tried from the page, so a token field could only collect a secret for nothing.
+
+A test fails if the submit list holds anything but `"get"`, or if any of these settings goes.
+
+**Strict CSP, no exception.** `/docs` and every asset send:
+- `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`
+- `Referrer-Policy: no-referrer`
+- `X-Frame-Options: DENY`, which repeats `frame-ancestors 'none'` for older browsers
+- `X-Content-Type-Options: nosniff`, which every response already carries
+
+The docs headers are mounted ahead of the rate limiter, so a 429 on `/docs` carries them too.
+
+`'unsafe-inline'` is not needed, and this was checked in a browser rather than assumed. Headless Chrome loaded `/docs` from the real binary and recorded:
+- no `securitypolicyviolation` event
+- no request to another origin
+- "Try it out" on all nine GET operations, and none on `POST /contracts`, `DELETE /contracts/{id}` or `POST /graphql`
+- no Authorize button and no lock icons
+- a GET executed from the page returning the live response
+
+Swagger UI's styles come from the stylesheet and from DOM style properties, which `style-src` doesn't govern, and its icons are `data:` SVGs.
+
+**Routing.** `GET /docs` and `GET /docs/assets/{file}` follow `/`:
+- They spend from the read bucket (ADR-055) and answer HEAD (ADR-057).
+- They appear in `openapi.json`, so the router-versus-spec and response-shape tests cover them (ADR-058). `/` links to `/docs`.
+- Asset names come from an allowlist. Anything else returns the ADR-017 404: the page itself, `VERSION`, `SHA256SUMS`, an unknown name, or an encoded path.
+- The page is sent with `Cache-Control: no-cache` and the assets with `public, max-age=3600`. Each response carries a strong ETag of its content, its sha256, and a matching `If-None-Match` gets a 304 with no body, so a repeat view doesn't resend the 1.7 MB bundle.
+
+### Alternatives considered
+
+- **Load Swagger UI from a CDN.** Rejected. It would hand script execution on the indexer's origin to a third party, and it would need `script-src` to name that host.
+- **Redoc or Scalar.** Not chosen. The user picked Swagger UI, and its initialiser fits in an external file with no inline configuration.
+- **Ship the whole `swagger-ui-dist` package.** Rejected. Most of it is source maps, ES-module builds and an OAuth redirect page the indexer never serves. Only what the page loads, plus its licences, is vendored.
+
+### Consequences
+
+- The binary and the image grow by the vendored files, about 1.9 MB uncompressed. The PR body records the image size before and after.
+- One page view costs about five requests from the shared read bucket: the page, three assets and `/openapi.json`. That's well inside the default burst of 20. Because the bucket is global, a client looping on `/docs` can still spend it for the data routes. That's the shared-bucket cost ADR-055 already accepts. Caching and the 304s cut the bandwidth, but not the tokens. A separate docs bucket, versioned asset paths with `immutable`, and pre-compressed assets are the next steps if real traffic needs them.
+- `SHA256SUMS` catches an edit to a vendored file, but not an edit that updates `SHA256SUMS` with it. The PR diff shows such a change to the reviewer. A CI job that re-runs the script for `VERSION` and diffs the result would close that gap without review, and is left for later.
+- Moving to a new Swagger UI release is `./scripts/vendor-swagger-ui.sh <version>` plus a review of the diff. A hand edit fails CI.
+- No setting was added. The docs-site link stays `PULSAR_INDEXER_DOCS_URL` (ADR-057).
