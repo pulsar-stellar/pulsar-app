@@ -2260,6 +2260,46 @@ On the Render deployment (ADR-054), `HEAD /health` answered 404 `NOT_FOUND_METHO
 
 - `HEAD /health` answers 200 with the JSON content type and no body, which closes #41.
 - `curl -I` works on every GET route.
-- Since #43, a HEAD on a read route reaches its handler and the store, and spends a read token. Before, it answered 404 without touching the store. The read bucket bounds both the same way.
+- With this change, a HEAD on a read route reaches its handler and the store, and spends a read token. Before, it answered 404 without touching the store. The read bucket bounds both the same way.
 - One new optional variable, `PULSAR_INDEXER_DOCS_URL`, is in `.env.example`, and `verify-env-parity` covers it. `render.yaml` doesn't set it, so the deployed indexer uses the default.
 - #42's remaining PRs extend this entry's surface. Each of them adds its link to `/` and a probe to the route walk.
+
+---
+
+## ADR-058: The REST surface is described by a hand-written OpenAPI document at /openapi.json, held to the router and the handlers by tests (second part of #42)
+Date: 2026-11-23
+Status: accepted
+
+### Context
+
+#42 plans a self-describing API. ADR-057 added HEAD and the root index. The next piece is a machine-readable description of the REST surface that the docs page (`/docs`, next PR) renders and that client generators can read. A description that drifts from the code is worse than none: it tells consumers something the server doesn't do. The indexer has no OpenAPI tooling today. Its REST handlers are plain chi handlers with hand-built envelopes (ADR-017).
+
+### Decision
+
+**The document is written by hand**, as `indexer/internal/api/openapi.json`, and embedded with `go:embed`. It covers every REST route and `POST /graphql`:
+- the ADR-017 success and error envelopes, the five error classes, and every catalog code
+- the events query parameters, with their bounds from `internal/validate`
+- `bearerAuth` on the two write routes
+- the 429 `RATE_LIMITED` response on rate-limited routes, and HEAD and the rate limits in the description
+
+**It is OpenAPI 3.0.3, not 3.1.** The test-side validator, kin-openapi, fully supports 3.0. Swagger UI renders 3.0. 3.1 would add nothing this surface uses.
+
+**Two tests keep it honest:**
+- `TestOpenAPIMatchesTheRouter` walks the registered routes with `chi.Walk` and compares them with the document's operations, in both directions. A route without an operation fails, and so does an operation without a route. HEAD is left out because it mirrors GET on every route (ADR-057).
+- `TestResponsesMatchTheSpec` sends real requests through `Routes()` against fake stores: success and failure for every operation, including 400, 401, 404, 429 and 500. It validates each response with kin-openapi, with `IncludeResponseStatus`, so a status the operation doesn't declare fails as well as a body that doesn't match. Breaking the document on purpose proved both: a renamed required field failed, and a removed 404 failed.
+
+**`GET /openapi.json` serves the document with `info.version` set to the running build.** It is built once per server, sent with `Cache-Control: public, max-age=300` so clients don't spend the shared read bucket on repeat fetches, and spends from the read bucket. It is the one JSON route outside the ADR-017 envelope, because OpenAPI tools expect the bare document. `/` links to it.
+
+**kin-openapi is a test-only dependency.** It appears in `go.mod`, but nothing outside `_test.go` imports it. `go list -deps ./cmd/pulsar-indexer` doesn't include it, and neither does the binary's build info, so it ships in no image.
+
+### Alternatives considered
+
+- **Generate the document from code annotations (swaggo and similar).** Rejected. The annotations would be a second hand-written description, kept in comments, with weaker checking than a test that validates real responses. They would also add a code generator to the build.
+- **Generate the handlers from the document (oapi-codegen).** Rejected for now. It would rewrite the HTTP layer that ADR-017, ADR-044 and ADR-055 shaped, for a surface of nine operations.
+- **Check only route coverage, not response shapes.** Rejected. Most drift is a changed field, not a missing route.
+
+### Consequences
+
+- A change to a handler's response, a new route, or a new status now needs a matching change to `openapi.json`, or CI fails.
+- PR 3 of #42 renders this document at `/docs`.
+- `go.mod` gains one direct requirement and four indirect ones, all test-only. govulncheck reports nothing.

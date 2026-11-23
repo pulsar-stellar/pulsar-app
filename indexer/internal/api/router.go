@@ -64,15 +64,17 @@ func (s *Server) router() *chi.Mux {
 		readMiddleware = append(readMiddleware, RateLimit(s.readLimiter, "read"))
 	}
 
+	// The root index and the OpenAPI document describe the surface. Both are
+	// public reads, so they spend from the read bucket like the routes they
+	// describe (ADR-055, ADR-057, ADR-058).
+	r.With(readMiddleware...).Get("/", s.handleRoot)
+	r.With(readMiddleware...).Get("/openapi.json", s.handleOpenAPI)
+
 	// The contract routes are registered flat rather than under a chi subrouter
 	// so /contracts matches the SDK's paths exactly, with no trailing slash and
 	// no redirect. List and get are public reads; register and delete are the
 	// write surface and carry the auth (and rate-limit) middleware inline, so the
 	// GET on the same path stays open.
-	// The root index is a public read, so it spends from the read bucket like
-	// the routes it lists (ADR-055, ADR-057).
-	r.With(readMiddleware...).Get("/", s.handleRoot)
-
 	r.With(readMiddleware...).Get("/contracts", s.handleListContracts)
 	r.With(writeMiddleware...).Post("/contracts", s.handleRegisterContract)
 	r.With(readMiddleware...).Get("/contracts/{id}", s.handleGetContract)
