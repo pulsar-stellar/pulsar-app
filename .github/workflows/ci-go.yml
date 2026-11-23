@@ -81,3 +81,26 @@ jobs:
         env:
           CGO_ENABLED: 0
         run: go build ./...
+
+  # The release workflow already runs govulncheck (ADR-052), but only on a tag,
+  # so a Go standard library fix used to surface at release time (GO-2026-6859
+  # failed indexer-v0.1.2, ADR-056). Running it on every PR and push to main
+  # shows a new finding while the change is small. It is a separate job, so a
+  # finding never hides the test results, and it runs the same pinned version
+  # as the release.
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: indexer/go.mod
+          cache-dependency-path: indexer/go.sum
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          "$(go env GOPATH)/bin/govulncheck" ./...
