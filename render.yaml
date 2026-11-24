@@ -5,15 +5,16 @@
 # secret: the admin token is entered in the dashboard (sync: false), and the
 # database URL comes from Render itself (fromDatabase).
 #
-# Plans default to free, which is enough to try the deploy but not to keep it:
+# The web service is on the free plan; the database is paid (ADR-061):
 # - The free web service sleeps after 15 minutes without inbound requests and
 #   takes about a minute to wake. While asleep the poller does not run. On wake
 #   it resumes from its cursor, so a gap shorter than RPC's seven-day
 #   retention is caught up and a longer one is lost.
-# - The free database expires 30 days after creation. Render deletes it after
-#   a further 14-day grace period unless it is upgraded.
+# - The database is on basic-256mb, listed on Render's pricing page as
+#   0.1c-256mb: $6/month plus $0.30/GB of storage (as of 2026-11). A free
+#   database expires after 30 days and is deleted 14 days later, which would
+#   lose every stored event older than RPC's seven-day window.
 # Paid, as of 2026-11: the web service on 0.5c-512mb is $7/month and always on.
-# Postgres on 0.1c-256mb is $6/month plus $0.30/GB of storage.
 
 services:
   - type: web
@@ -75,7 +76,7 @@ services:
 
 databases:
   - name: pulsar-indexer-db
-    plan: free
+    plan: basic-256mb
     region: frankfurt
     # The version the migrations are proven on (ADR-047).
     postgresMajorVersion: "16"
