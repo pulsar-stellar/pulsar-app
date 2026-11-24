@@ -2370,3 +2370,50 @@ Swagger UI's styles come from the stylesheet and from DOM style properties, whic
 - `SHA256SUMS` catches an edit to a vendored file, but not an edit that updates `SHA256SUMS` with it. The PR diff shows such a change to the reviewer. A CI job that re-runs the script for `VERSION` and diffs the result would close that gap without review, and is left for later.
 - Moving to a new Swagger UI release is `./scripts/vendor-swagger-ui.sh <version>` plus a review of the diff. A hand edit fails CI.
 - No setting was added. The docs-site link stays `PULSAR_INDEXER_DOCS_URL` (ADR-057).
+
+---
+
+## ADR-060: GraphiQL is dropped from #42, bundled docs UIs share a 5 MB image budget, and the docs asset routes ignore Range
+Date: 2026-11-23
+Status: accepted
+
+### Context
+
+#42 planned GraphiQL on `GET /graphql` as its fourth PR, built under the same rules as `/docs` (ADR-059): bundled and pinned with checksums, no inline script, the same strict CSP, and no open advisories. GraphiQL 5 and later ship no browser bundle; they need the Monaco editor and a bundler. So the candidate was graphiql 4.1.2, the last 4.x release (2025-06-06), with React 18.3.1 and ReactDOM 18.3.1 as globals, for about 1.6 MB.
+
+The advisory check came first. graphiql 4.1.2, React 18.3.1 and ReactDOM 18.3.1 have no advisories in OSV or the GitHub advisory database. `graphiql.min.js` compiles in everything except React. Its contents were resolved from graphiql's own `yarn.lock` at the release commit `60d5bbc`: 84 npm packages and 6 workspace packages. Two of the npm packages have open advisories. The bundle does contain them: markdown-it is constructed with `linkify` and `html` enabled.
+
+| Bundled package | Advisories | Severity | Fixed in |
+|---|---|---|---|
+| markdown-it 14.1.0 | GHSA-gfr2-rv44-r23c, GHSA-r7fv-28h4-cvq7 | high | 14.3.3 and 14.3.2 |
+| | GHSA-38c4-r59v-3vqw, GHSA-6v5v-wf23-fmfq, GHSA-253c-mchw-3w2r | medium | 14.1.1, 14.2.0, 14.3.1 |
+| | GHSA-vfgh-jcmw-g37q | low | 14.3.3 |
+| linkify-it 5.0.0 | GHSA-22p9-wv53-3rq4, GHSA-v245-v573-v5vm | high | 5.0.1 and 5.0.2 |
+
+All eight are denial of service through quadratic-time parsing of crafted markdown. None is withdrawn. No graphiql 3.x or 4.x release carries the fixed versions, because the fixes shipped in 2026, after the last 4.x release.
+
+### Decision
+
+**GraphiQL is dropped from #42.** `GET /graphql` stays POST-only, exactly as ADR-043 left it. The schema remains introspectable through `POST /graphql`, and `/docs` documents the GraphQL endpoint alongside the REST routes. #42's release becomes its last PR.
+
+The other options were weighed and not taken:
+- **A minimal hand-written GraphQL page** (a query box and a same-origin POST) would avoid the advisories. But it gives up what makes GraphiQL worth having (autocomplete and the schema explorer), and it adds a UI this project would maintain alone.
+- **Rebuilding graphiql 4.1.2 from source** with markdown-it 14.3.3 and linkify-it 5.0.2 forced in would fix the advisories. But the vendored hashes would then be of our build rather than npm's published ones, and vendoring would need a Node and Yarn build step. That breaks the supply-chain rule ADR-059 set.
+- **Accepting the advisories with a written justification** would break the rule that a bundled UI has no open advisory. The practical risk is a frozen tab caused by our own schema descriptions, which is low but not none.
+
+**Revisit** when a maintained GraphiQL release ships a browser bundle with no open advisories in OSV or the GitHub advisory database, for the bundle and everything compiled into it. Check it the same way: resolve the bundle's contents from the release's lock file and query both databases.
+
+**Bundled docs UIs share a 5 MB image budget.** Everything vendored for in-browser docs (today only `/docs`) may grow the image by at most 5 MB in total, measured with `docker image ls` on a local build against `main`. `/docs` uses 2.47 MB of it (27.9 MB to 30.4 MB, ADR-059). A UI that would push the total past 5 MB is not added without a new decision.
+
+**The docs asset routes ignore Range.** `http.ServeContent` answered `Range` with 206 and 416 and advertised `Accept-Ranges: bytes`, but the spec declares only 200, 404, 429 and 500 for `/docs` and its assets. The files are small, so the handler now:
+- answers a matching `If-None-Match` (any listed tag, its weak `W/` form, or `*`) with a 304 and no body
+- answers every other request with the whole file and 200, whatever `Range` says, without `Accept-Ranges`
+
+`TestDocsAssetsIgnoreRange` and `TestDocsAssetsConditionalRequests` pin both behaviours.
+
+### Consequences
+
+- #42 ends with its release PR: `indexer-v0.2.0`, the new `render.yaml` digest, and the docs links.
+- The image stays at the 2.47 MB growth `/docs` brought.
+- A later GraphQL UI starts from this entry: the advisory check, the 5 MB budget, and ADR-059's CSP and vendoring rules.
+- An automated test that loads `/docs` from the built image is still owed. It is tracked in #55, together with ADR-059's deferred re-vendoring CI job.
