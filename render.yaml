@@ -24,10 +24,10 @@ services:
     # Render's private network, which does not span regions.
     region: frankfurt
     image:
-      # Image tag 0.1.3 (git tag indexer-v0.1.3), pinned by digest so a moved
+      # Image tag 0.2.0 (git tag indexer-v0.2.0), pinned by digest so a moved
       # tag cannot change what runs (ADR-054).
       # Public, so no registry credential is needed.
-      url: ghcr.io/pulsar-stellar/indexer@sha256:50be4efc96ea9c1401028b793f2335577ced7aa217a90e362db2bab2d7a43142
+      url: ghcr.io/pulsar-stellar/indexer@sha256:0a2fea55af1020bdab86150b027e4e67520f91e30060de0b1a1d98f47c43ca01
     healthCheckPath: /health
     envVars:
       # The indexer reads its listen address from PULSAR_INDEXER_LISTEN_ADDR,
