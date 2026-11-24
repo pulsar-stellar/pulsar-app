@@ -2417,3 +2417,36 @@ The other options were weighed and not taken:
 - The image stays at the 2.47 MB growth `/docs` brought.
 - A later GraphQL UI starts from this entry: the advisory check, the 5 MB budget, and ADR-059's CSP and vendoring rules.
 - An automated test that loads `/docs` from the built image is still owed. It is tracked in #55, together with ADR-059's deferred re-vendoring CI job.
+
+---
+
+## ADR-061: The hosted indexer's Postgres moves to a paid plan; the web service stays free
+Date: 2026-11-24
+Status: accepted
+
+### Context
+
+ADR-054 put the hosted indexer and its Postgres on Render's free plans, and `render.yaml` recorded the cost of staying there. A free Render Postgres expires 30 days after creation. It is then inaccessible unless upgraded, and Render deletes it, with all its data, 14 days later. The indexer's database was created on 2026-11-10, so it expires around 2026-12-10.
+
+Losing that database costs more than a restart. The poller can only re-fetch what Soroban RPC still holds, about seven days of ledgers. A fresh free database would start with that window and nothing older, and every event stored beyond it would be gone for good. Keeping history past RPC's retention is the reason the indexer exists. The public docs link the hosted URL, so a lapse would also break a published endpoint.
+
+### Decision
+
+**The database moves to `basic-256mb`.** Render's pricing page lists it as `0.1c-256mb`: 0.1 CPU, 256 MB RAM, 100 connections, **$6/month**, with storage at **$0.30/GB per month** (checked 2026-11-24). Render's Blueprint schema accepts both names. The maintainer upgrades it in the dashboard, and `render.yaml` declares the same plan, so a later Blueprint sync doesn't try to move it back. The region (`frankfurt`), Postgres version 16, database name, user and empty `ipAllowList` are unchanged.
+
+`diskSizeGB` stays unset. Render keeps an existing database's disk size when the Blueprint leaves it out, so the database keeps the 1 GB it has, about $0.30/month, and grows only by an explicit change.
+
+**The web service stays free.** It sleeps after 15 minutes without requests, and the poller stops while it sleeps. On wake it resumes from its cursor, so any gap shorter than RPC's seven-day window is caught up and nothing is lost. A gap longer than that would lose events, and that becomes the trigger to pay for the web service ($7/month on `0.5c-512mb`, always on). So does real traffic that the cold start annoys.
+
+### Alternatives considered
+
+- **Stay free and recreate the database every 30 days.** Rejected. Every recreation drops all history older than RPC's window, which defeats the indexer's purpose.
+- **Pay for the web service too.** Not now. Its only cost on the free plan is latency and sleep. Both are recoverable while gaps stay under seven days.
+- **Move the database off Render.** Rejected. The Blueprint wires the database URL from the managed instance (ADR-054). An outside database would bring back a hand-copied credential, plus a TLS setup Render's private network already provides.
+
+### Consequences
+
+- The hosted indexer costs about $6.30/month: $6 for compute and roughly $0.30 for 1 GB of storage.
+- The database no longer expires, and the 2026-12-10 deadline is gone once the dashboard upgrade is done.
+- `render.yaml`'s header describes the mixed plans and links here.
+- The web service's sleep stays a documented limit in the READMEs and pulsar-docs. Paying for it later is a one-line plan change and an amendment to this entry.
