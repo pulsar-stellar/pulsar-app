@@ -312,3 +312,88 @@ func TestDocsHeadersCoverRateLimitedAndFraming(t *testing.T) {
 		}
 	}
 }
+
+// The asset routes ignore Range: a ranged request, a satisfiable or an
+// unsatisfiable one, gets the whole file with 200, never 206 or 416, and no
+// response advertises byte ranges. The files are small, and the spec declares
+// only 200, 404, 429 and 500 for them.
+func TestDocsAssetsIgnoreRange(t *testing.T) {
+	t.Parallel()
+
+	srv := probeServer()
+	want, err := docsUI.ReadFile("docsui/init.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rng := range []string{"bytes=0-9", "bytes=-5", "bytes=999999999-", "bytes=0-1,5-9", "invalid"} {
+		req := httptest.NewRequest(http.MethodGet, "/docs/assets/init.js", nil)
+		req.Header.Set("Range", rng)
+		rr := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Errorf("Range %q: status = %d, want 200", rng, rr.Code)
+		}
+		if !bytes.Equal(rr.Body.Bytes(), want) {
+			t.Errorf("Range %q: body is %d bytes, want the whole %d-byte file", rng, rr.Body.Len(), len(want))
+		}
+		for _, h := range []string{"Content-Range", "Accept-Ranges"} {
+			if got := rr.Header().Get(h); got != "" {
+				t.Errorf("Range %q: %s = %q, want it absent", rng, h, got)
+			}
+		}
+	}
+}
+
+// Conditional requests keep working without range support: any listed ETag,
+// a weak form of it, or "*" gets a 304 with no body; a different ETag gets the
+// whole file.
+func TestDocsAssetsConditionalRequests(t *testing.T) {
+	t.Parallel()
+
+	srv := probeServer()
+	etag := serve(srv, http.MethodGet, "/docs/assets/swagger-ui.css", "").Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag on the asset")
+	}
+	cases := []struct {
+		ifNoneMatch string
+		want        int
+	}{
+		{etag, http.StatusNotModified},
+		{`"other", ` + etag, http.StatusNotModified},
+		{"W/" + etag, http.StatusNotModified},
+		{"*", http.StatusNotModified},
+		{`"other"`, http.StatusOK},
+		{`"` + strings.Repeat("0", 64) + `"`, http.StatusOK},
+	}
+	// A client may also split the list over several header lines.
+	multi := httptest.NewRequest(http.MethodGet, "/docs/assets/swagger-ui.css", nil)
+	multi.Header.Add("If-None-Match", `"other"`)
+	multi.Header.Add("If-None-Match", etag)
+	rr := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rr, multi)
+	if rr.Code != http.StatusNotModified {
+		t.Errorf("If-None-Match over two lines: status = %d, want 304", rr.Code)
+	}
+
+	for _, tc := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/docs/assets/swagger-ui.css", nil)
+		req.Header.Set("If-None-Match", tc.ifNoneMatch)
+		req.Header.Set("Range", "bytes=0-9")
+		rr := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rr, req)
+
+		if rr.Code != tc.want {
+			t.Errorf("If-None-Match %q: status = %d, want %d", tc.ifNoneMatch, rr.Code, tc.want)
+		}
+		if tc.want == http.StatusNotModified {
+			if rr.Body.Len() != 0 {
+				t.Errorf("If-None-Match %q: 304 carried %d bytes", tc.ifNoneMatch, rr.Body.Len())
+			}
+			if rr.Header().Get("ETag") != etag {
+				t.Errorf("If-None-Match %q: 304 ETag = %q, want %q", tc.ifNoneMatch, rr.Header().Get("ETag"), etag)
+			}
+		}
+	}
+}

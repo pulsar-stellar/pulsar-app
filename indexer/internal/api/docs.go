@@ -1,13 +1,13 @@
 package api
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -90,11 +90,13 @@ func (s *Server) handleDocsAsset(w http.ResponseWriter, r *http.Request) {
 	s.serveEmbedded(w, r, asset.path, asset.contentType, "public, max-age=3600")
 }
 
-// serveEmbedded writes one embedded file with a content ETag. http.ServeContent
-// answers a matching If-None-Match with a 304 and no body, so a repeat view
-// costs a token but not the transfer. A read failure means the binary was
-// built without a file it embeds, which the tests rule out; it still answers
-// with the internal envelope rather than panicking.
+// serveEmbedded writes one embedded file with a content ETag. A matching
+// If-None-Match gets a 304 and no body, so a repeat view costs a token but not
+// the transfer. Range is ignored: every other request gets the whole file with
+// 200, never 206 or 416, because the files are small and the spec declares
+// neither (ADR-060). A read failure means the binary was built without a file
+// it embeds, which the tests rule out; it still answers with the internal
+// envelope rather than panicking.
 func (s *Server) serveEmbedded(w http.ResponseWriter, r *http.Request, path, contentType, cacheControl string) {
 	data, err := docsUI.ReadFile(path)
 	if err != nil {
@@ -106,8 +108,28 @@ func (s *Server) serveEmbedded(w http.ResponseWriter, r *http.Request, path, con
 		writeError(w, apierror.New(apierror.CodeInternalPanic, "The indexer could not serve its API docs."))
 		return
 	}
-	w.Header().Set("Content-Type", contentType)
+	etag := docsETag(path, data)
 	w.Header().Set("Cache-Control", cacheControl)
-	w.Header().Set("ETag", docsETag(path, data))
-	http.ServeContent(w, r, path, time.Time{}, bytes.NewReader(data))
+	w.Header().Set("ETag", etag)
+	if etagMatches(strings.Join(r.Header.Values("If-None-Match"), ","), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// etagMatches reports whether an If-None-Match header matches etag, using the
+// weak comparison RFC 9110 specifies for If-None-Match: "*" matches, and a
+// listed tag matches whether or not it carries the W/ prefix.
+func etagMatches(header, etag string) bool {
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
+			return true
+		}
+	}
+	return false
 }
