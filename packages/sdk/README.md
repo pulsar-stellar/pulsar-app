@@ -28,7 +28,7 @@ const client = new PulsarClient({
 });
 ```
 
-`https://pulsar-indexer.onrender.com` is a public Pulsar indexer on testnet, so the read examples below work without running anything. It indexes only the showcase contract (`CDNWTVUD...YWI5L`); registering a contract needs the operator's token. Reads share a rate limit (10 requests per second, burst 20), and a request over it gets a `429`. It runs on a free plan that sleeps after 15 minutes idle, so the first request after a quiet spell can take about a minute. For your own contracts, run your own indexer (see [`indexer/README.md`](https://github.com/pulsar-stellar/pulsar-app/blob/main/indexer/README.md)).
+`https://pulsar-indexer.onrender.com` is a public Pulsar indexer on testnet, so the read examples below work without running anything. It indexes only the showcase contract (`CDNWTVUD...YWI5L`); registering a contract needs the operator's token. Reads share a rate limit (10 requests per second, burst 20), and a request over it gets a `429`. It runs on a free plan that sleeps after 15 minutes idle, so the first request after a quiet spell can take about a minute. Its routes are documented interactively at <https://pulsar-indexer.onrender.com/docs>. For your own contracts, run your own indexer (see [`indexer/README.md`](https://github.com/pulsar-stellar/pulsar-app/blob/main/indexer/README.md)).
 
 ### Read event history from the indexer
 
